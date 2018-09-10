@@ -1,0 +1,65 @@
+syntax on
+colorscheme desert
+set nowrap
+set isk+=:
+set backspace=indent,eol,start
+
+autocmd FileType *pp call SetBashFiles()
+autocmd FileType tcl  call SetScriptingFiles()
+autocmd FileType sql  call SetSqlFiles()
+autocmd FileType pl   call SetScriptingFiles()
+autocmd FileType sh   call SetBashFiles()
+autocmd FileType html call SetWebFiles()
+autocmd FileType php  call SetWebFiles()
+
+function SetBashFiles()
+ set tabstop=4
+ set shiftwidth=4
+ set autoindent
+ set expandtab
+ set colorcolumn=81,121
+ highlight ColorColumn ctermbg=7
+endfunction
+
+function SetScriptingFiles()
+ set tabstop=4
+ set shiftwidth=4
+ call AllDevFiles()
+endfunction
+
+function SetWebFiles()
+ set tabstop=2
+ set shiftwidth=2
+ call AllDevFiles()
+endfunction
+
+function SetSqlFiles()
+ set tabstop=8
+ set shiftwidth=8
+ call AllDevFiles()
+endfunction
+
+function SetCppFiles()
+ set tabstop=4
+ set shiftwidth=4
+ set expandtab
+ call AllDevFiles()
+endfunction
+
+function AllDevFiles()
+ set autoindent
+ set noexpandtab
+ set colorcolumn=81,121
+ highlight ColorColumn ctermbg=7
+endfunction
+
+highlight DiffAdd    ctermfg=White guifg=White
+highlight DiffDelete ctermfg=Black guifg=Black
+highlight DiffChange ctermfg=White guifg=White
+highlight DiffText   ctermfg=Black guifg=Black ctermbg=Yellow guibg=Yellow
+
+let g:minimap_show='<leader>mo'
+let g:minimap_update='<leader>mu'
+let g:minimap_close='<leader>mc'
+let g:minimap_toggle='<leader>mt'
+
