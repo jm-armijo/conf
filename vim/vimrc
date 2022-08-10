@@ -5,12 +5,16 @@ set isk+=:
 set backspace=indent,eol,start
 
 autocmd FileType *pp call SetBashFiles()
+autocmd FileType ruby call SetBashFiles()
 autocmd FileType tcl  call SetScriptingFiles()
 autocmd FileType sql  call SetSqlFiles()
 autocmd FileType pl   call SetScriptingFiles()
 autocmd FileType sh   call SetBashFiles()
 autocmd FileType html call SetWebFiles()
 autocmd FileType php  call SetWebFiles()
+autocmd BufRead *_spec.rb syn keyword rubyRspec describe context it specify it_should_behave_like before after setup subject its shared_examples_for shared_context let
+highlight def link rubyRspec Function
+
 
 function SetBashFiles()
  set tabstop=4
@@ -63,3 +67,9 @@ let g:minimap_update='<leader>mu'
 let g:minimap_close='<leader>mc'
 let g:minimap_toggle='<leader>mt'
 
+" Load all plugins now.
+" Plugins need to be added to runtimepath before helptags can be generated.
+packloadall
+" Load all of the helptags now, after plugins have been loaded.
+" All messages and errors will be ignored.
+silent! helptags ALL
