@@ -1,0 +1,38 @@
+[user]
+	name = Jose Miguel Armijo
+	email = j.armijofidalgo@cultureamp.com
+[alias]
+	co = checkout
+	br = branch
+	ci = commit
+	st = status
+	sq = rebase -i
+	rename = branch -m
+	po = pull origin
+	ll = log --oneline
+	sq2 = rebase -i HEAD~2
+	pm = !git fetch origin main && git update-ref refs/heads/main origin/main
+	shu = stash push -k -u
+	cont = !~/personal/scripts/contributors_table.sh
+	fix = commit --amend --no-edit
+	aliases = config --get-regexp '^alias\\.'
+	rbm = "!f(){ git pm && git rebase main; }; f"
+	vs = "!f() {\n  idx=\"${1:-0}\";\n  S=\"stash@{${idx}}\";\n\n  # Validate the stash entry exists\n  git rev-parse --verify -q \"$S^{commit}\" >/dev/null || {\n    echo \"error: $S not found\" >&2; exit 1;\n  }\n\n  # Stash description (subject line)\n  desc=$(git log -1 --pretty=%s \"$S\")\n  echo \"stash@{${idx}}: $desc\"\n  echo\n\n  {\n    # Tracked changes (index + working tree) vs base\n    git diff --name-status --no-renames \"$S^1\" \"$S\";\n\n    # Untracked/ignored files (if present) as Added\n    git ls-tree -r --name-only \"$S^3\" 2>/dev/null | sed \"s/^/A\\t/\";\n  } |\n  # Prefer tracked status when a path appears in both; then sort by path\n  awk -F\"\\t\" '{ if (!seen[$2]++) map[$2]=$1 } END { for (f in map) print map[f] \"\\t\" f }' |\n  sort -k2,2\n}; f"
+	wm = worktree move
+[push]
+	autoSetupRemote = true
+[core]
+	editor = vim
+	excludesfile = /Users/j.armijofidalgo/.gitignore_global
+[url "ssh://git@github.com/"]
+	insteadOf = https://github.com/
+[difftool "sourcetree"]
+	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
+	path = 
+[mergetool "sourcetree"]
+	cmd = /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
+	trustExitCode = true
+[commit]
+	template = /Users/j.armijofidalgo/.stCommitMsg
+[init]
+	defaultBranch = main

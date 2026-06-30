@@ -1,1 +1,9 @@
 *.swp
+
+# OBS: the live obs-studio dir is symlinked here, so OBS writes logs, caches,
+# plugins, and the obs-websocket password into obs/<res>/ too. Track only the
+# portable config and ignore everything else OBS drops in.
+obs/*/*
+!obs/*/global.ini
+!obs/*/user.ini
+!obs/*/basic/
