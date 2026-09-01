@@ -104,6 +104,129 @@ backup_count() {
   [ ! -L "$DEST" ]
 }
 
+# --- zsh_custom_dir --------------------------------------------------------
+#
+# The break this guards against: a user uncomments zshrc's ZSH_CUSTOM line, so
+# their shell scans a different themes dir than the one setup.sh installs into,
+# and ZSH_THEME="spaceship" silently stops resolving. The helper has to read the
+# answer out of zsh/zshrc, because $ZSH_CUSTOM is never set in this bash script.
+
+# Write a zshrc into the scratch REPO_DIR. It always carries the shipped
+# COMMENTED template line (the thing the parser must never match); $1, when
+# given, is appended as a real uncommented assignment.
+write_zshrc() {
+  {
+    echo 'ZSH="$HOME/.oh-my-zsh"'
+    echo '# Would you like to use another custom folder than $ZSH/custom?'
+    echo '# ZSH_CUSTOM=/path/to/new-custom-folder'
+    if [[ $# -gt 0 ]]; then echo "ZSH_CUSTOM=$1"; fi
+  } >"$REPO_DIR/zsh/zshrc"
+}
+
+# Point zsh_custom_dir() at a scratch zshrc holding $1 (or none) and echo it.
+custom_dir_for() {
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/zsh"
+  write_zshrc "$@"
+  zsh_custom_dir
+}
+
+@test "zsh_custom_dir ignores the commented-out template and falls back" {
+  # The default state of the repo's own zshrc. Anything but the fallback here
+  # means the parser is matching a comment.
+  bats_run custom_dir_for
+  [ "$status" -eq 0 ]
+  [ "$output" = "${BATS_TEST_TMPDIR}/home/.oh-my-zsh/custom" ]
+}
+
+@test "zsh_custom_dir falls back when zshrc is missing entirely" {
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  REPO_DIR="${BATS_TEST_TMPDIR}/no-such-repo"
+  bats_run zsh_custom_dir
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HOME/.oh-my-zsh/custom" ]
+}
+
+@test "zsh_custom_dir reads an uncommented explicit path" {
+  bats_run custom_dir_for "/explicit/path"
+  [ "$output" = "/explicit/path" ]
+}
+
+@test "zsh_custom_dir expands \$HOME, \${HOME} and ~ in the value" {
+  local home="${BATS_TEST_TMPDIR}/home"
+  bats_run custom_dir_for '$HOME/omz-custom'
+  [ "$output" = "$home/omz-custom" ]
+  bats_run custom_dir_for '${HOME}/omz-custom'
+  [ "$output" = "$home/omz-custom" ]
+  bats_run custom_dir_for '~/omz-custom'
+  [ "$output" = "$home/omz-custom" ]
+}
+
+@test "zsh_custom_dir expands \$ZSH to the oh-my-zsh install dir" {
+  # `ZSH_CUSTOM=$ZSH/custom` is how oh-my-zsh users spell the default. Asserted
+  # on a NON-default leaf on purpose: `$ZSH/custom` expands to the same string
+  # as the fallback, so a broken expansion would still look right.
+  bats_run custom_dir_for '$ZSH/mine'
+  [ "$output" = "${BATS_TEST_TMPDIR}/home/.oh-my-zsh/mine" ]
+  bats_run custom_dir_for '${ZSH}/braced'
+  [ "$output" = "${BATS_TEST_TMPDIR}/home/.oh-my-zsh/braced" ]
+}
+
+@test "zsh_custom_dir handles leading whitespace and quoted values" {
+  bats_run custom_dir_for '"/quoted/path"'
+  [ "$output" = "/quoted/path" ]
+  bats_run custom_dir_for "'/single/quoted'"
+  [ "$output" = "/single/quoted" ]
+  # Leading indentation before the assignment, trailing whitespace after it.
+  bats_run custom_dir_for '"$HOME/spaced"   '
+  [ "$output" = "${BATS_TEST_TMPDIR}/home/spaced" ]
+
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/zsh"
+  write_zshrc
+  printf '\tZSH_CUSTOM="/indented/path"\n' >>"$REPO_DIR/zsh/zshrc"
+  bats_run zsh_custom_dir
+  [ "$output" = "/indented/path" ]
+}
+
+@test "zsh_custom_dir falls back on values it cannot expand safely" {
+  local fallback="${BATS_TEST_TMPDIR}/home/.oh-my-zsh/custom"
+  # Relative: would resolve against setup.sh's cwd, not $HOME.
+  bats_run custom_dir_for "relative/path"
+  [ "$output" = "$fallback" ]
+  # An unknown variable — expanding it would need the file eval'd.
+  bats_run custom_dir_for '$XDG_CONFIG_HOME/omz'
+  [ "$output" = "$fallback" ]
+  # Command substitution must never be executed, only refused — including when
+  # it hides behind an otherwise-expandable $HOME prefix, where the leading-word
+  # check alone would wave it through.
+  bats_run custom_dir_for '$(touch '"${BATS_TEST_TMPDIR}"'/pwned)'
+  [ "$output" = "$fallback" ]
+  bats_run custom_dir_for '$HOME/$(touch '"${BATS_TEST_TMPDIR}"'/pwned)'
+  [ "$output" = "$fallback" ]
+  bats_run custom_dir_for '$HOME/`touch '"${BATS_TEST_TMPDIR}"'/pwned`'
+  [ "$output" = "$fallback" ]
+  [ ! -e "${BATS_TEST_TMPDIR}/pwned" ]
+  # Whitespace inside the value: unquoted, zsh would word-split it; we refuse.
+  bats_run custom_dir_for '$HOME/two words'
+  [ "$output" = "$fallback" ]
+  # Empty assignment.
+  bats_run custom_dir_for ""
+  [ "$output" = "$fallback" ]
+}
+
+@test "zsh_custom_dir takes the last uncommented assignment" {
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/zsh"
+  write_zshrc "/first/path"
+  echo 'ZSH_CUSTOM=/second/path' >>"$REPO_DIR/zsh/zshrc"
+  bats_run zsh_custom_dir
+  [ "$output" = "/second/path" ]
+}
+
 # --- setup_spaceship -------------------------------------------------------
 #
 # These never reach the network or the real $HOME: HOME is redirected into the
@@ -112,9 +235,21 @@ backup_count() {
 
 # Redirect HOME and install the git stub. $GIT_LOG records each invocation;
 # `touch $GIT_FAIL` first to make the stub exit non-zero.
+#
+# Also points REPO_DIR at a scratch copy of the repo layout holding just
+# zsh/zshrc, since zsh_custom_dir() reads the themes location out of that file.
+# $1, if given, is the ZSH_CUSTOM value written there uncommented; with no
+# argument the zshrc carries only the shipped commented-out template, which is
+# the default state every pre-existing test below assumes.
 spaceship_env() {
   export HOME="${BATS_TEST_TMPDIR}/home"
-  export THEMES="$HOME/.oh-my-zsh/custom/themes"
+
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/zsh"
+  write_zshrc "$@"
+
+  export THEMES
+  THEMES="$(zsh_custom_dir)/themes"
   export DIR="$THEMES/spaceship-prompt"
   export GIT_LOG="${BATS_TEST_TMPDIR}/git.log"
   export GIT_FAIL="${BATS_TEST_TMPDIR}/git.fail"
@@ -240,6 +375,61 @@ theme_backup_count() {
   [ ! -e "$THEMES/spaceship.zsh-theme" ]
   [ ! -L "$THEMES/spaceship.zsh-theme" ]
   [[ "$output" != *"spaceship: installed"* ]]
+}
+
+@test "setup_spaceship installs under \$HOME/.oh-my-zsh/custom by default" {
+  # No-regression case: with only the commented template in zshrc, the install
+  # lands exactly where it did before zsh_custom_dir() existed.
+  spaceship_env
+  make_omz
+
+  bats_run setup_spaceship
+  [ "$status" -eq 0 ]
+  grep -q "$HOME/.oh-my-zsh/custom/themes/spaceship-prompt\$" "$GIT_LOG"
+  [ -L "$HOME/.oh-my-zsh/custom/themes/spaceship.zsh-theme" ]
+}
+
+@test "setup_spaceship follows an uncommented ZSH_CUSTOM to an explicit path" {
+  # The whole point: zshrc moved the custom dir, so the clone and the theme
+  # symlink must move with it or the shell never finds the theme.
+  spaceship_env "${BATS_TEST_TMPDIR}/elsewhere"
+  make_omz
+  [ "$THEMES" = "${BATS_TEST_TMPDIR}/elsewhere/themes" ]
+
+  bats_run setup_spaceship
+  [ "$status" -eq 0 ]
+
+  grep -q "${BATS_TEST_TMPDIR}/elsewhere/themes/spaceship-prompt\$" "$GIT_LOG"
+  [ -d "$DIR/.git" ]
+  [ -L "$THEMES/spaceship.zsh-theme" ]
+  [ "$(readlink "$THEMES/spaceship.zsh-theme")" = "$DIR/spaceship.zsh-theme" ]
+
+  # ...and nothing was written to the old hardcoded location.
+  [ ! -e "$HOME/.oh-my-zsh/custom/themes" ]
+}
+
+@test "setup_spaceship follows a \$HOME-relative ZSH_CUSTOM" {
+  spaceship_env '$HOME/omz-custom'
+  make_omz
+  [ "$THEMES" = "$HOME/omz-custom/themes" ]
+
+  bats_run setup_spaceship
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/omz-custom/themes/spaceship-prompt/.git" ]
+  [ -L "$HOME/omz-custom/themes/spaceship.zsh-theme" ]
+  [ ! -e "$HOME/.oh-my-zsh/custom/themes" ]
+}
+
+@test "setup_spaceship still requires oh-my-zsh when ZSH_CUSTOM is relocated" {
+  # The -d ~/.oh-my-zsh guard checks $ZSH, a different variable — relocating
+  # ZSH_CUSTOM must not accidentally satisfy or bypass it.
+  spaceship_env "${BATS_TEST_TMPDIR}/elsewhere"
+  mkdir -p "${BATS_TEST_TMPDIR}/elsewhere"
+
+  bats_run setup_spaceship
+  [ "$status" -ne 0 ]
+  [[ "$output" == skip:* ]]
+  [ ! -e "$GIT_LOG" ]
 }
 
 @test "setup_spaceship fails when the pull fails" {

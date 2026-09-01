@@ -15,7 +15,7 @@ cd ~/code/conf
 The script:
 
 - Symlinks `zsh/zshrc` → `~/.zshrc` and `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
-- Clones (or pulls) the **Spaceship** prompt into `~/.oh-my-zsh/custom/themes/spaceship-prompt`, then symlinks its `spaceship.zsh-theme` one level up into `~/.oh-my-zsh/custom/themes/` — oh-my-zsh only discovers themes directly in that directory, never nested.
+- Clones (or pulls) the **Spaceship** prompt into `~/.oh-my-zsh/custom/themes/spaceship-prompt`, then symlinks its `spaceship.zsh-theme` one level up into `~/.oh-my-zsh/custom/themes/` — oh-my-zsh only discovers themes directly in that directory, never nested. If you uncomment `ZSH_CUSTOM` in `zsh/zshrc`, the script reads that path out of the file and installs there instead, so the shell and the installer never disagree.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
 
