@@ -17,7 +17,8 @@ errors=()
 
 # Run a named step; record (don't abort) if it fails so later steps still run.
 run() {
-  local desc="$1"; shift
+  local desc="$1"
+  shift
   if "$@"; then
     return 0
   fi
@@ -41,8 +42,13 @@ link() {
   fi
 
   if [[ -e "$dest" || -L "$dest" ]]; then
-    local backup="${dest}.backup.$(date +%Y%m%d%H%M%S)"
-    mv "$dest" "$backup" || { echo "error: could not back up $dest"; return 1; }
+    # Declared then assigned separately so `local` doesn't mask date's exit status.
+    local backup
+    backup="${dest}.backup.$(date +%Y%m%d%H%M%S)"
+    mv "$dest" "$backup" || {
+      echo "error: could not back up $dest"
+      return 1
+    }
     echo "back: moved existing $dest -> $backup"
   fi
 
@@ -115,22 +121,26 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
-echo "Setting up from $REPO_DIR"
+# Only run the setup when executed directly. Sourcing the script (the bats suite
+# does this) just loads the helpers above without touching the machine.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "Setting up from $REPO_DIR"
 
-run "zsh"     setup_zsh
-run "git"     setup_git
-run "ghostty" setup_ghostty
-run "magnet"  setup_magnet
-run "obs"     setup_obs
+  run "zsh" setup_zsh
+  run "git" setup_git
+  run "ghostty" setup_ghostty
+  run "magnet" setup_magnet
+  run "obs" setup_obs
 
-echo
-if [[ ${#errors[@]} -eq 0 ]]; then
-  echo "Done — all steps succeeded. Restart your shell (or run: exec zsh)."
-else
-  echo "Done with ${#errors[@]} error(s):"
-  for e in "${errors[@]}"; do
-    echo "  - $e"
-  done
-  echo "Fix the above and re-run ./setup.sh (it's safe to re-run)."
-  exit 1
+  echo
+  if [[ ${#errors[@]} -eq 0 ]]; then
+    echo "Done — all steps succeeded. Restart your shell (or run: exec zsh)."
+  else
+    echo "Done with ${#errors[@]} error(s):"
+    for e in "${errors[@]}"; do
+      echo "  - $e"
+    done
+    echo "Fix the above and re-run ./setup.sh (it's safe to re-run)."
+    exit 1
+  fi
 fi
