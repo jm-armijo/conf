@@ -4,11 +4,11 @@ Personal configuration for **zsh** (with the **Spaceship** prompt), **git**, **g
 
 ## Setup a new machine
 
-Clone the repo, then run the setup script:
+Clone the repo anywhere you like, then run the setup script:
 
 ```bash
-git clone <this-repo-url> ~/code/personal/conf
-cd ~/code/personal/conf
+git clone <this-repo-url> ~/code/conf
+cd ~/code/conf
 ./setup.sh
 ```
 
@@ -18,6 +18,9 @@ The script:
 - Clones (or pulls) the **Spaceship** prompt into `~/.oh-my-zsh/custom/themes/spaceship-prompt`, then symlinks its `spaceship.zsh-theme` one level up into `~/.oh-my-zsh/custom/themes/` — oh-my-zsh only discovers themes directly in that directory, never nested.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
+
+The clone location isn't baked in anywhere — `zsh/zshrc` finds its sibling files by
+resolving its own `~/.zshrc` symlink — so any directory works.
 
 Because these are symlinks, any later edit to your live config is saved straight back into the repo — including `git config --global` writes, which follow the symlink into `git/gitconfig`.
 

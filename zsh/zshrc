@@ -82,7 +82,12 @@ source $ZSH/oh-my-zsh.sh
 # `${VAR=default}` guards, so it won't clobber values set earlier, but not
 # every section is written that way and upstream only supports this order.)
 # Guarded so a machine without this repo checked out still gets a working shell.
-[[ -f "$HOME/code/conf/zsh/spaceship.zsh" ]] && source "$HOME/code/conf/zsh/spaceship.zsh"
+# `${(%):-%x}` is this file's own path; `:A` resolves the ~/.zshrc symlink to the
+# real file in the repo and `:h` takes its directory, so the repo works wherever
+# it is cloned.
+_spaceship_conf="${${(%):-%x}:A:h}/spaceship.zsh"
+[[ -f "$_spaceship_conf" ]] && source "$_spaceship_conf"
+unset _spaceship_conf
 
 # User configuration
 
