@@ -62,114 +62,39 @@ setup_zsh() {
   link "$REPO_DIR/zsh/agnoster.zsh-theme" "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" || return 1
 }
 
-# Where oh-my-zsh looks for custom themes, i.e. $ZSH_CUSTOM.
+# Starship is a compiled Rust binary, not a zsh script, so none of the other
+# strategies in this script fit: there is no tracked file to symlink into place
+# (strategy 1) and cloning starship.rs would only get us source — building it
+# would need a Rust toolchain and a per-machine `cargo build` that takes minutes
+# and can fail on a toolchain mismatch. Homebrew already publishes a prebuilt,
+# versioned bottle, so installing is a single fast download of a known-good
+# binary that `brew upgrade` keeps current alongside everything else.
 #
-# Read from zsh/zshrc rather than the environment ON PURPOSE — do NOT
-# "simplify" this to ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}. This is a bash
-# script that never sources oh-my-zsh, so ZSH_CUSTOM is never set here; that
-# expression would compile fine and then always take the fallback, quietly
-# pretending to be configurable. zsh/zshrc is the file the user actually edits
-# to move the custom dir (line ~68 ships commented out), so it is the source of
-# truth, and parsing it is the only way this script and the interactive shell
-# agree on one path. If they disagree, the theme installs where oh-my-zsh no
-# longer scans and ZSH_THEME="spaceship" silently fails to resolve.
-#
-# Deliberately narrow: only a plain, top-level, uncommented `ZSH_CUSTOM=<value>`
-# assignment counts, with an optionally quoted value that may start with $HOME,
-# $ZSH or ~. Anything else (command substitution, other variables, a value with
-# whitespace or a trailing comment) is not something we can expand without
-# eval'ing the file, so it falls back rather than guessing a wrong path.
-zsh_custom_dir() {
-  local fallback="$HOME/.oh-my-zsh/custom"
-  local zshrc="$REPO_DIR/zsh/zshrc" value
-
-  [[ -f "$zshrc" ]] || {
-    echo "$fallback"
+# The binary is the only thing brew owns here; its *config* is a plain file this
+# repo tracks, so that goes through link() like every other dotfile (see
+# setup_starship_config below).
+setup_starship() {
+  if command -v starship >/dev/null 2>&1; then
+    echo "ok:   starship already installed ($(starship --version | head -n 1))"
     return 0
-  }
-
-  # Last uncommented assignment wins, matching how zsh would evaluate the file.
-  # ^[[:blank:]]*ZSH_CUSTOM= anchors past leading indentation but before any #,
-  # so the shipped `# ZSH_CUSTOM=/path/to/new-custom-folder` template never
-  # matches and the default state yields the fallback.
-  value="$(sed -n 's/^[[:blank:]]*ZSH_CUSTOM=\(.*\)$/\1/p' "$zshrc" | tail -n 1)"
-  value="${value%"${value##*[![:blank:]]}"}" # strip trailing whitespace
-  # Strip one layer of matching quotes.
-  if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
-    value="${value:1:${#value}-2}"
   fi
 
-  # Validate the *written* form before expanding, so the checks judge what the
-  # user typed rather than whatever $HOME happens to contain. Rejected: an empty
-  # value, embedded whitespace, command substitution, and any $-form other than
-  # the leading $HOME/$ZSH handled below — all things we'd have to eval to get
-  # right, and this must never eval the file.
-  # Every $... and ~ below is a LITERAL pattern matched against the text read
-  # out of zshrc, never an expansion — the single quotes are load-bearing, so
-  # the linter's "did you mean double quotes" advice is inverted here.
-  # shellcheck disable=SC2016,SC2088
-  {
-    local head="${value%%/*}"
-    case "$value" in
-      '' | *[[:space:]]* | *'`'* | *'$('*) value="" ;;
-    esac
-    case "$head" in
-      '' | '~' | '$HOME' | '${HOME}' | '$ZSH' | '${ZSH}') ;;
-      *'$'*) value="" ;;
-    esac
-
-    # $ZSH is oh-my-zsh's own install dir; zshrc sets it to ~/.oh-my-zsh, and
-    # `ZSH_CUSTOM=$ZSH/custom` is a common way to write the default.
-    case "$value" in
-      '~' | '~/'*) value="$HOME${value:1}" ;;
-      '$HOME' | '$HOME/'*) value="$HOME${value:5}" ;;
-      '${HOME}' | '${HOME}/'*) value="$HOME${value:7}" ;;
-      '$ZSH' | '$ZSH/'*) value="$HOME/.oh-my-zsh${value:4}" ;;
-      '${ZSH}' | '${ZSH}/'*) value="$HOME/.oh-my-zsh${value:6}" ;;
-    esac
-  }
-
-  # Only an absolute path is usable — a relative one would resolve against
-  # whatever directory setup.sh happens to be run from. That, and anything
-  # rejected above, means "parse failed": take the known-good fallback rather
-  # than writing files to an absurd location.
-  [[ "$value" == /* ]] || value="$fallback"
-
-  echo "$value"
-}
-
-# Spaceship is an upstream git repo, not a single file we can vendor into this
-# repo, so it can't be installed by symlinking a tracked file like every other
-# step here. It has to be cloned, then kept current with a pull. link() is wrong
-# for the clone directory — it backs the destination up and replaces it, so
-# every re-run would move the clone aside and re-clone from scratch, littering
-# $HOME with .backup.* copies. Clone-or-pull by hand instead, and use link()
-# only for the theme file, where backup + idempotency are exactly what we want.
-setup_spaceship() {
-  # Declared then assigned separately so `local` doesn't mask the exit status.
-  local themes
-  themes="$(zsh_custom_dir)/themes"
-  local dir="$themes/spaceship-prompt"
-
-  if ! [[ -d "$HOME/.oh-my-zsh" ]]; then
-    echo "skip: oh-my-zsh not installed"
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "skip: brew not installed — see https://brew.sh, then re-run"
     return 1
   fi
 
-  if [[ -d "$dir/.git" ]]; then
-    git -C "$dir" pull --ff-only || return 1
-  else
-    # git/gitconfig sets a global url."ssh://git@github.com/".insteadOf
-    # https://github.com/ rewrite, so this HTTPS URL resolves over SSH on a
-    # machine set up by this script — an SSH auth error here is not a typo.
-    mkdir -p "$themes" || return 1
-    git clone --depth=1 https://github.com/spaceship-prompt/spaceship-prompt.git "$dir" || return 1
-  fi
+  brew install starship || return 1
+  echo "starship: installed (restart your shell to apply)"
+}
 
-  # oh-my-zsh only auto-discovers *.zsh-theme directly in the themes dir, never
-  # nested in a subdirectory, so the theme file has to be surfaced one level up.
-  link "$dir/spaceship.zsh-theme" "$themes/spaceship.zsh-theme" || return 1
-  echo "spaceship: installed (restart your shell to apply)"
+# The prompt config is an ordinary tracked file, so this is strategy 1 — a plain
+# link(), same as zshrc or ghostty/config, and edits to the live file write
+# straight back into the repo. Kept as its own step rather than folded into
+# setup_starship so the config still lands on a machine where the brew install
+# was skipped or failed; it is inert until the binary shows up.
+setup_starship_config() {
+  link "$REPO_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
 }
 
 setup_git() {
@@ -237,7 +162,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "Setting up from $REPO_DIR"
 
   run "zsh" setup_zsh
-  run "spaceship" setup_spaceship
+  run "starship" setup_starship
+  run "starship-config" setup_starship_config
   run "git" setup_git
   run "ghostty" setup_ghostty
   run "magnet" setup_magnet

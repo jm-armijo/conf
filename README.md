@@ -1,6 +1,6 @@
 # conf
 
-Personal configuration for **zsh** (with the **Spaceship** prompt), **git**, **ghostty**, and the **Magnet** and **OBS** macOS apps.
+Personal configuration for **zsh** (with the **Starship** prompt), **git**, **ghostty**, and the **Magnet** and **OBS** macOS apps.
 
 ## Setup a new machine
 
@@ -15,7 +15,8 @@ cd ~/code/conf
 The script:
 
 - Symlinks `zsh/zshrc` → `~/.zshrc` and `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
-- Clones (or pulls) the **Spaceship** prompt into `~/.oh-my-zsh/custom/themes/spaceship-prompt`, then symlinks its `spaceship.zsh-theme` one level up into `~/.oh-my-zsh/custom/themes/` — oh-my-zsh only discovers themes directly in that directory, never nested. If you uncomment `ZSH_CUSTOM` in `zsh/zshrc`, the script reads that path out of the file and installs there instead, so the shell and the installer never disagree.
+- Installs the **Starship** prompt with `brew install starship` (skipped, with a message, if it's already there or if Homebrew isn't). Starship is a compiled binary, not a zsh script, so it comes from a package manager rather than being vendored here.
+- Symlinks `starship/starship.toml` → `~/.config/starship.toml` — the prompt's own config, which *is* tracked in this repo. This step runs independently of the install above, so the config still lands on a machine where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
 
@@ -41,10 +42,10 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
   ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
 ```
 
-The Spaceship prompt needs a **Nerd Font** — a stricter requirement than agnoster's
-Powerline-patched font, because Spaceship's section icons (git branch, node, ruby, …)
-are glyphs that only exist in the Nerd Font range. A Powerline font alone renders them
-as boxes or blanks:
+The Starship prompt needs a **Nerd Font** — a stricter requirement than agnoster's
+Powerline-patched font. The rounded segment caps (``, ``) and the branch/AWS icons in
+`starship/starship.toml` are glyphs that only exist in the Nerd Font range; a Powerline
+font alone renders them as boxes or blanks:
 
 ```bash
 brew install --cask font-meslo-lg-nerd-font
@@ -57,9 +58,9 @@ makes it live — rather than in a GUI:
 font-family = MesloLGS Nerd Font
 ```
 
-If you'd rather not install a Nerd Font, drop the icon-bearing sections (`git`, `package`,
-`node`, `ruby`) from `SPACESHIP_PROMPT_ORDER` in `zsh/spaceship.zsh`; the remaining
-sections are plain text.
+If you'd rather not install a Nerd Font, edit `starship/starship.toml`: replace the ``/``
+caps with the plain-ASCII Powerline arrow `` (or nothing), and clear the `symbol` values on
+`[git_branch]` and `[aws]`. The colours and the section order work without any of them.
 
 The agnoster fallback theme needs only a Powerline-patched font:
 
@@ -69,6 +70,23 @@ cd fonts && ./install.sh && cd .. && rm -rf fonts
 ```
 
 In iTerm2: Settings → Profiles → Text → enable *Use built-in Powerline glyphs*.
+
+## Prompt
+
+`starship/starship.toml` is agnoster's look rebuilt on Starship: agnoster's section
+order (`status → virtualenv → aws → context → dir → git`) and its colours, drawn as
+rounded segments rather than agnoster's square ones.
+
+The colours are the **basic-8 terminal names** (`blue`, `green`, `yellow`, `black`,
+`red`, `cyan`), not hex, deliberately — they resolve against the terminal's own palette,
+so the `theme` line in `ghostty/config` still recolours the prompt exactly as it did
+under agnoster.
+
+The one bit of logic worth knowing: agnoster coloured the git segment green when the
+working tree was clean and yellow when it was dirty. Starship has no such switch, so
+that's two modules — `[git_branch]` is the always-present green pill with the branch
+name, and `[git_status]` is a yellow pill that appears beside it only when the tree is
+dirty.
 
 ## Magnet
 
@@ -128,7 +146,7 @@ cp -R "$OBS"/. "obs/$RES"/         # .gitignore keeps only the portable subset
 ## Editing config later
 
 - **zsh** — edit `~/.zshrc` or the theme directly; the symlink means changes land in the repo automatically. Commit when ready.
-- **prompt** — edit `zsh/spaceship.zsh` (sections, prompt character, truncation). It's symlink-live like the rest, so edits apply on the next shell; no reinstall. To revert to the old prompt, set `ZSH_THEME="agnoster"` in `zsh/zshrc` — `zsh/agnoster.zsh-theme` is still tracked and still installed.
+- **prompt** — edit `starship/starship.toml` (sections, colours, prompt character, truncation). It's symlink-live like the rest, so edits apply on the next prompt; no reinstall. To revert to the old prompt, set `ZSH_THEME="agnoster"` in `zsh/zshrc` — `zsh/agnoster.zsh-theme` is still tracked and still installed, and the Starship init is guarded so it simply does nothing if the binary is absent.
 - **git** — edit `~/.gitconfig` or run `git config --global ...` as usual; the symlink means changes (aliases and everything else) land in `git/gitconfig` automatically. Commit when ready.
 - **ghostty** — edit `~/.config/ghostty/config` directly; the symlink means changes land in `ghostty/config` automatically. Commit when ready.
 

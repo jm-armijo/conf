@@ -5,9 +5,8 @@
 # clobbers real dotfiles; these tests pin its three contracts: it creates the
 # symlink, it is idempotent, and it never destroys an existing real file.
 #
-# Also covers setup_spaceship(), the only step that installs from an upstream
-# clone rather than a tracked file, and so the only one that can re-clone or
-# litter backups on a re-run.
+# Also covers setup_starship(), the only step that installs a binary via a
+# package manager, and setup_starship_config(), which links its config file.
 #
 # Run: bats test/
 
@@ -104,342 +103,192 @@ backup_count() {
   [ ! -L "$DEST" ]
 }
 
-# --- zsh_custom_dir --------------------------------------------------------
+# --- setup_starship --------------------------------------------------------
 #
-# The break this guards against: a user uncomments zshrc's ZSH_CUSTOM line, so
-# their shell scans a different themes dir than the one setup.sh installs into,
-# and ZSH_THEME="spaceship" silently stops resolving. The helper has to read the
-# answer out of zsh/zshrc, because $ZSH_CUSTOM is never set in this bash script.
+# These never install anything or touch the real $HOME: HOME is redirected into
+# the per-test tmpdir, and stubs for `brew` and `starship` earlier on PATH log
+# what they were called with instead of running.
 
-# Write a zshrc into the scratch REPO_DIR. It always carries the shipped
-# COMMENTED template line (the thing the parser must never match); $1, when
-# given, is appended as a real uncommented assignment.
-write_zshrc() {
-  {
-    echo 'ZSH="$HOME/.oh-my-zsh"'
-    echo '# Would you like to use another custom folder than $ZSH/custom?'
-    echo '# ZSH_CUSTOM=/path/to/new-custom-folder'
-    if [[ $# -gt 0 ]]; then echo "ZSH_CUSTOM=$1"; fi
-  } >"$REPO_DIR/zsh/zshrc"
-}
-
-# Point zsh_custom_dir() at a scratch zshrc holding $1 (or none) and echo it.
-custom_dir_for() {
-  export HOME="${BATS_TEST_TMPDIR}/home"
-  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
-  mkdir -p "$REPO_DIR/zsh"
-  write_zshrc "$@"
-  zsh_custom_dir
-}
-
-@test "zsh_custom_dir ignores the commented-out template and falls back" {
-  # The default state of the repo's own zshrc. Anything but the fallback here
-  # means the parser is matching a comment.
-  bats_run custom_dir_for
-  [ "$status" -eq 0 ]
-  [ "$output" = "${BATS_TEST_TMPDIR}/home/.oh-my-zsh/custom" ]
-}
-
-@test "zsh_custom_dir falls back when zshrc is missing entirely" {
-  export HOME="${BATS_TEST_TMPDIR}/home"
-  REPO_DIR="${BATS_TEST_TMPDIR}/no-such-repo"
-  bats_run zsh_custom_dir
-  [ "$status" -eq 0 ]
-  [ "$output" = "$HOME/.oh-my-zsh/custom" ]
-}
-
-@test "zsh_custom_dir reads an uncommented explicit path" {
-  bats_run custom_dir_for "/explicit/path"
-  [ "$output" = "/explicit/path" ]
-}
-
-@test "zsh_custom_dir expands \$HOME, \${HOME} and ~ in the value" {
-  local home="${BATS_TEST_TMPDIR}/home"
-  bats_run custom_dir_for '$HOME/omz-custom'
-  [ "$output" = "$home/omz-custom" ]
-  bats_run custom_dir_for '${HOME}/omz-custom'
-  [ "$output" = "$home/omz-custom" ]
-  bats_run custom_dir_for '~/omz-custom'
-  [ "$output" = "$home/omz-custom" ]
-}
-
-@test "zsh_custom_dir expands \$ZSH to the oh-my-zsh install dir" {
-  # `ZSH_CUSTOM=$ZSH/custom` is how oh-my-zsh users spell the default. Asserted
-  # on a NON-default leaf on purpose: `$ZSH/custom` expands to the same string
-  # as the fallback, so a broken expansion would still look right.
-  bats_run custom_dir_for '$ZSH/mine'
-  [ "$output" = "${BATS_TEST_TMPDIR}/home/.oh-my-zsh/mine" ]
-  bats_run custom_dir_for '${ZSH}/braced'
-  [ "$output" = "${BATS_TEST_TMPDIR}/home/.oh-my-zsh/braced" ]
-}
-
-@test "zsh_custom_dir handles leading whitespace and quoted values" {
-  bats_run custom_dir_for '"/quoted/path"'
-  [ "$output" = "/quoted/path" ]
-  bats_run custom_dir_for "'/single/quoted'"
-  [ "$output" = "/single/quoted" ]
-  # Leading indentation before the assignment, trailing whitespace after it.
-  bats_run custom_dir_for '"$HOME/spaced"   '
-  [ "$output" = "${BATS_TEST_TMPDIR}/home/spaced" ]
-
-  export HOME="${BATS_TEST_TMPDIR}/home"
-  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
-  mkdir -p "$REPO_DIR/zsh"
-  write_zshrc
-  printf '\tZSH_CUSTOM="/indented/path"\n' >>"$REPO_DIR/zsh/zshrc"
-  bats_run zsh_custom_dir
-  [ "$output" = "/indented/path" ]
-}
-
-@test "zsh_custom_dir falls back on values it cannot expand safely" {
-  local fallback="${BATS_TEST_TMPDIR}/home/.oh-my-zsh/custom"
-  # Relative: would resolve against setup.sh's cwd, not $HOME.
-  bats_run custom_dir_for "relative/path"
-  [ "$output" = "$fallback" ]
-  # An unknown variable — expanding it would need the file eval'd.
-  bats_run custom_dir_for '$XDG_CONFIG_HOME/omz'
-  [ "$output" = "$fallback" ]
-  # Command substitution must never be executed, only refused — including when
-  # it hides behind an otherwise-expandable $HOME prefix, where the leading-word
-  # check alone would wave it through.
-  bats_run custom_dir_for '$(touch '"${BATS_TEST_TMPDIR}"'/pwned)'
-  [ "$output" = "$fallback" ]
-  bats_run custom_dir_for '$HOME/$(touch '"${BATS_TEST_TMPDIR}"'/pwned)'
-  [ "$output" = "$fallback" ]
-  bats_run custom_dir_for '$HOME/`touch '"${BATS_TEST_TMPDIR}"'/pwned`'
-  [ "$output" = "$fallback" ]
-  [ ! -e "${BATS_TEST_TMPDIR}/pwned" ]
-  # Whitespace inside the value: unquoted, zsh would word-split it; we refuse.
-  bats_run custom_dir_for '$HOME/two words'
-  [ "$output" = "$fallback" ]
-  # Empty assignment.
-  bats_run custom_dir_for ""
-  [ "$output" = "$fallback" ]
-}
-
-@test "zsh_custom_dir takes the last uncommented assignment" {
-  export HOME="${BATS_TEST_TMPDIR}/home"
-  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
-  mkdir -p "$REPO_DIR/zsh"
-  write_zshrc "/first/path"
-  echo 'ZSH_CUSTOM=/second/path' >>"$REPO_DIR/zsh/zshrc"
-  bats_run zsh_custom_dir
-  [ "$output" = "/second/path" ]
-}
-
-# --- setup_spaceship -------------------------------------------------------
+# Redirect HOME and build a scratch PATH holding ONLY the stubs a test asks for,
+# plus the system dirs setup.sh's own helpers need (mkdir, ln, mv, date). The
+# real brew and starship live in /opt/homebrew/bin, which is deliberately NOT on
+# this PATH — so "not stubbed" means genuinely absent to `command -v`, rather
+# than silently resolving to the developer's real binary and passing vacuously.
 #
-# These never reach the network or the real $HOME: HOME is redirected into the
-# per-test tmpdir, and a fake `git` earlier on PATH logs the subcommand it was
-# called with (and fakes the clone's on-disk result) instead of running it.
-
-# Redirect HOME and install the git stub. $GIT_LOG records each invocation;
-# `touch $GIT_FAIL` first to make the stub exit non-zero.
-#
-# Also points REPO_DIR at a scratch copy of the repo layout holding just
-# zsh/zshrc, since zsh_custom_dir() reads the themes location out of that file.
-# $1, if given, is the ZSH_CUSTOM value written there uncommented; with no
-# argument the zshrc carries only the shipped commented-out template, which is
-# the default state every pre-existing test below assumes.
-spaceship_env() {
+# $BREW_LOG records each brew invocation; `touch $BREW_FAIL` makes brew fail.
+starship_env() {
   export HOME="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "$HOME"
 
   REPO_DIR="${BATS_TEST_TMPDIR}/repo"
-  mkdir -p "$REPO_DIR/zsh"
-  write_zshrc "$@"
+  mkdir -p "$REPO_DIR/starship"
+  echo "# starship config" >"$REPO_DIR/starship/starship.toml"
 
-  export THEMES
-  THEMES="$(zsh_custom_dir)/themes"
-  export DIR="$THEMES/spaceship-prompt"
-  export GIT_LOG="${BATS_TEST_TMPDIR}/git.log"
-  export GIT_FAIL="${BATS_TEST_TMPDIR}/git.fail"
+  export BREW_LOG="${BATS_TEST_TMPDIR}/brew.log"
+  export BREW_FAIL="${BATS_TEST_TMPDIR}/brew.fail"
 
-  local bin="${BATS_TEST_TMPDIR}/bin"
-  mkdir -p "$bin"
-  cat >"$bin/git" <<'STUB'
+  STUB_BIN="${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "$STUB_BIN"
+  export PATH="$STUB_BIN:/usr/bin:/bin"
+}
+
+# Put a fake `starship` on PATH — i.e. pretend it is already installed.
+stub_starship() {
+  cat >"$STUB_BIN/starship" <<'STUB'
 #!/bin/bash
-echo "$*" >>"$GIT_LOG"
-# Fake what a real clone leaves behind, so the theme symlink has a source.
-# Done even in the failure case deliberately: it means a failing clone is
-# distinguishable ONLY by its exit status, so a test asserting the failure
-# can't pass off the back of link() tripping over a missing source instead.
-if [[ "$1" == "clone" ]]; then
-  target="${*: -1}"
-  mkdir -p "$target/.git"
-  echo "theme" >"$target/spaceship.zsh-theme"
-fi
-[[ -e "$GIT_FAIL" ]] && exit 1
+[[ "$1" == "--version" ]] && echo "starship 1.2.3"
 exit 0
 STUB
-  chmod +x "$bin/git"
-  export PATH="$bin:$PATH"
+  chmod +x "$STUB_BIN/starship"
 }
 
-# Pretend an earlier `sh install.sh` from oh-my-zsh already ran.
-make_omz() {
-  mkdir -p "$HOME/.oh-my-zsh"
+# Put a fake `brew` on PATH that logs its arguments instead of installing.
+stub_brew() {
+  cat >"$STUB_BIN/brew" <<'STUB'
+#!/bin/bash
+echo "$*" >>"$BREW_LOG"
+[[ -e "$BREW_FAIL" ]] && exit 1
+exit 0
+STUB
+  chmod +x "$STUB_BIN/brew"
 }
 
-# Simulate a clone already on disk from a previous setup.sh run.
-make_clone() {
-  mkdir -p "$DIR/.git"
-  echo "theme" >"$DIR/spaceship.zsh-theme"
+@test "setup_starship is a no-op when starship is already installed" {
+  starship_env
+  stub_starship
+  stub_brew
+
+  bats_run setup_starship
+  [ "$status" -eq 0 ]
+  # The point of the early return: brew must not be invoked at all, not merely
+  # invoked and shrugged off — otherwise every setup.sh re-run shells out to a
+  # network-touching `brew install` for a binary that is already there.
+  [ ! -e "$BREW_LOG" ]
+  [[ "$output" == ok:* ]]
 }
 
-# Backups anywhere under the themes dir — the litter a wrong link() would leave.
-theme_backup_count() {
-  [[ -d "$THEMES" ]] || {
-    echo 0
-    return
+@test "setup_starship fails with skip: when brew is missing" {
+  starship_env
+  # Neither stub installed: nothing to short-circuit on, and no brew to use.
+  [ ! -x "$STUB_BIN/starship" ]
+  [ ! -x "$STUB_BIN/brew" ]
+
+  bats_run setup_starship
+  [ "$status" -ne 0 ]
+  [[ "$output" == skip:* ]]
+  [[ "$output" == *brew* ]]
+}
+
+@test "setup_starship brew-installs starship when it is missing" {
+  starship_env
+  stub_brew
+  [ ! -x "$STUB_BIN/starship" ]
+
+  bats_run setup_starship
+  [ "$status" -eq 0 ]
+  [ -e "$BREW_LOG" ]
+  grep -qx 'install starship' "$BREW_LOG"
+}
+
+@test "setup_starship fails when brew install fails" {
+  starship_env
+  stub_brew
+  touch "$BREW_FAIL"
+
+  bats_run setup_starship
+  [ "$status" -ne 0 ]
+  # brew was actually reached and its non-zero exit propagated, rather than the
+  # step bailing earlier for an unrelated reason and looking like the same thing.
+  grep -qx 'install starship' "$BREW_LOG"
+  [[ "$output" != *"starship: installed"* ]]
+}
+
+# --- setup_starship_config -------------------------------------------------
+#
+# Strategy 1: an ordinary link() of the tracked toml. Kept as its own step,
+# separate from the brew install, so the config lands even where the binary
+# did not.
+
+@test "setup_starship_config symlinks starship.toml into ~/.config" {
+  starship_env
+
+  bats_run setup_starship_config
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/.config/starship.toml" ]
+  [ "$(readlink "$HOME/.config/starship.toml")" = "$REPO_DIR/starship/starship.toml" ]
+  # link() has to create ~/.config itself on a fresh machine, where it is absent.
+  [ "$(cat "$HOME/.config/starship.toml")" = "# starship config" ]
+}
+
+@test "setup_starship_config does not require starship to be installed" {
+  # The reason it is a separate step: a machine where the brew install was
+  # skipped or failed must still get the config, ready for the binary's arrival.
+  starship_env
+  [ ! -x "$STUB_BIN/starship" ]
+  [ ! -x "$STUB_BIN/brew" ]
+
+  bats_run setup_starship_config
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/.config/starship.toml" ]
+}
+
+@test "setup_starship_config fails when the tracked toml is missing" {
+  starship_env
+  rm "$REPO_DIR/starship/starship.toml"
+
+  bats_run setup_starship_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == skip:* ]]
+  [ ! -e "$HOME/.config/starship.toml" ]
+}
+
+# --- the repo's own tracked files ------------------------------------------
+#
+# setup.sh and zshrc refer to these by path; a rename, a deletion or a TOML typo
+# would otherwise only surface as a promptless shell on a machine that pulled.
+
+@test "the tracked starship.toml exists and parses" {
+  local toml="${BATS_TEST_DIRNAME}/../starship/starship.toml"
+  [ -f "$toml" ]
+  if ! command -v starship >/dev/null 2>&1; then
+    skip "starship not installed"
+  fi
+
+  # DO NOT reduce this to asserting starship's exit status. On a TOML syntax
+  # error starship logs to STDERR and **still exits 0**, silently rendering its
+  # built-in default prompt instead — verified against 1.26.0. A status-only
+  # check therefore passes on a config the user's shell is quietly ignoring,
+  # which is the exact failure this test exists to catch. Diagnostics on stderr
+  # are the only signal, so capture and assert on those.
+  local err="${BATS_TEST_TMPDIR}/starship.err"
+  STARSHIP_CONFIG="$toml" starship module character >/dev/null 2>"$err"
+  [ ! -s "$err" ] || {
+    cat "$err" >&2
+    return 1
   }
-  find "$THEMES" -maxdepth 1 -name '*.backup.*' | wc -l | tr -d ' '
 }
 
-@test "setup_spaceship skips and clones nothing when oh-my-zsh is missing" {
-  spaceship_env
-  [ ! -d "$HOME/.oh-my-zsh" ]
-
-  bats_run setup_spaceship
-  [ "$status" -ne 0 ]
-  [[ "$output" == skip:* ]]
-  # The guard must fire before any git call, not just print alongside one.
-  [ ! -e "$GIT_LOG" ]
-  [ ! -e "$DIR" ]
+@test "zshrc initialises starship after sourcing oh-my-zsh" {
+  local zshrc="${BATS_TEST_DIRNAME}/../zsh/zshrc"
+  local omz init
+  omz="$(grep -n '^source \$ZSH/oh-my-zsh\.sh' "$zshrc" | cut -d: -f1)"
+  init="$(grep -n 'starship init zsh' "$zshrc" | cut -d: -f1)"
+  [ -n "$omz" ]
+  [ -n "$init" ]
+  # Order is load-bearing: sourcing oh-my-zsh assigns $PROMPT, so a starship
+  # init placed above that line is silently overwritten and the prompt reverts.
+  [ "$init" -gt "$omz" ]
+  # And the init must be guarded, or a machine without the binary prints an
+  # error on every single shell start.
+  grep -q 'command -v starship' "$zshrc"
 }
 
-@test "setup_spaceship clones on a fresh install and links the theme file" {
-  spaceship_env
-  make_omz
-
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-
-  # Shallow clone of the upstream repo into the custom themes dir.
-  grep -q '^clone --depth=1 .*spaceship-prompt' "$GIT_LOG"
-  grep -q "$DIR\$" "$GIT_LOG"
-  ! grep -q '^-C .* pull' "$GIT_LOG"
-
-  # oh-my-zsh only discovers *.zsh-theme at the top of the themes dir, so the
-  # nested theme file must be surfaced as a symlink one level up.
-  [ -L "$THEMES/spaceship.zsh-theme" ]
-  [ "$(readlink "$THEMES/spaceship.zsh-theme")" = "$DIR/spaceship.zsh-theme" ]
-}
-
-@test "setup_spaceship pulls an existing clone instead of re-cloning it" {
-  spaceship_env
-  make_omz
-  make_clone
-  echo "local marker" >"$DIR/marker"
-
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-
-  grep -q "^-C $DIR pull --ff-only\$" "$GIT_LOG"
-  ! grep -q '^clone' "$GIT_LOG"
-
-  # The regression this design exists to prevent: link() must never be pointed
-  # at the clone dir, or a re-run moves it aside as .backup.* and re-clones.
-  [ "$(theme_backup_count)" = "0" ]
-  [ -d "$DIR/.git" ]
-  [ "$(cat "$DIR/marker")" = "local marker" ]
-}
-
-@test "setup_spaceship is idempotent across repeated runs" {
-  spaceship_env
-  make_omz
-
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-
-  # Second run pulls rather than cloning again, and leaves no backups behind.
-  [ "$(grep -c '^clone' "$GIT_LOG")" = "1" ]
-  [ "$(grep -c 'pull --ff-only' "$GIT_LOG")" = "1" ]
-  [ "$(theme_backup_count)" = "0" ]
-  [ "$(readlink "$THEMES/spaceship.zsh-theme")" = "$DIR/spaceship.zsh-theme" ]
-}
-
-@test "setup_spaceship fails when the clone fails" {
-  spaceship_env
-  make_omz
-  touch "$GIT_FAIL"
-
-  bats_run setup_spaceship
-  [ "$status" -ne 0 ]
-  grep -q '^clone' "$GIT_LOG"
-  # The stub leaves a usable clone behind even when it fails, so link() would
-  # succeed here. The only thing that can fail this step is the clone's exit
-  # status being propagated — and the step must bail before linking a repo
-  # that git said it could not fetch.
-  [ ! -e "$THEMES/spaceship.zsh-theme" ]
-  [ ! -L "$THEMES/spaceship.zsh-theme" ]
-  [[ "$output" != *"spaceship: installed"* ]]
-}
-
-@test "setup_spaceship installs under \$HOME/.oh-my-zsh/custom by default" {
-  # No-regression case: with only the commented template in zshrc, the install
-  # lands exactly where it did before zsh_custom_dir() existed.
-  spaceship_env
-  make_omz
-
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-  grep -q "$HOME/.oh-my-zsh/custom/themes/spaceship-prompt\$" "$GIT_LOG"
-  [ -L "$HOME/.oh-my-zsh/custom/themes/spaceship.zsh-theme" ]
-}
-
-@test "setup_spaceship follows an uncommented ZSH_CUSTOM to an explicit path" {
-  # The whole point: zshrc moved the custom dir, so the clone and the theme
-  # symlink must move with it or the shell never finds the theme.
-  spaceship_env "${BATS_TEST_TMPDIR}/elsewhere"
-  make_omz
-  [ "$THEMES" = "${BATS_TEST_TMPDIR}/elsewhere/themes" ]
-
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-
-  grep -q "${BATS_TEST_TMPDIR}/elsewhere/themes/spaceship-prompt\$" "$GIT_LOG"
-  [ -d "$DIR/.git" ]
-  [ -L "$THEMES/spaceship.zsh-theme" ]
-  [ "$(readlink "$THEMES/spaceship.zsh-theme")" = "$DIR/spaceship.zsh-theme" ]
-
-  # ...and nothing was written to the old hardcoded location.
-  [ ! -e "$HOME/.oh-my-zsh/custom/themes" ]
-}
-
-@test "setup_spaceship follows a \$HOME-relative ZSH_CUSTOM" {
-  spaceship_env '$HOME/omz-custom'
-  make_omz
-  [ "$THEMES" = "$HOME/omz-custom/themes" ]
-
-  bats_run setup_spaceship
-  [ "$status" -eq 0 ]
-  [ -d "$HOME/omz-custom/themes/spaceship-prompt/.git" ]
-  [ -L "$HOME/omz-custom/themes/spaceship.zsh-theme" ]
-  [ ! -e "$HOME/.oh-my-zsh/custom/themes" ]
-}
-
-@test "setup_spaceship still requires oh-my-zsh when ZSH_CUSTOM is relocated" {
-  # The -d ~/.oh-my-zsh guard checks $ZSH, a different variable — relocating
-  # ZSH_CUSTOM must not accidentally satisfy or bypass it.
-  spaceship_env "${BATS_TEST_TMPDIR}/elsewhere"
-  mkdir -p "${BATS_TEST_TMPDIR}/elsewhere"
-
-  bats_run setup_spaceship
-  [ "$status" -ne 0 ]
-  [[ "$output" == skip:* ]]
-  [ ! -e "$GIT_LOG" ]
-}
-
-@test "setup_spaceship fails when the pull fails" {
-  spaceship_env
-  make_omz
-  make_clone
-  touch "$GIT_FAIL"
-
-  bats_run setup_spaceship
-  [ "$status" -ne 0 ]
-  grep -q 'pull --ff-only' "$GIT_LOG"
-  ! grep -q '^clone' "$GIT_LOG"
+@test "zshrc selects no oh-my-zsh theme and no longer sources spaceship" {
+  local zshrc="${BATS_TEST_DIRNAME}/../zsh/zshrc"
+  # ZSH_THEME must be empty: a non-empty theme would race starship for $PROMPT.
+  grep -qx 'ZSH_THEME=""' "$zshrc"
+  ! grep -qi 'spaceship' "$zshrc"
+  [ ! -e "${BATS_TEST_DIRNAME}/../zsh/spaceship.zsh" ]
+  # agnoster stays: it is the documented fallback and setup_zsh still links it.
+  [ -f "${BATS_TEST_DIRNAME}/../zsh/agnoster.zsh-theme" ]
 }

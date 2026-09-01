@@ -8,9 +8,11 @@ export ZSH=$HOME/.oh-my-zsh
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
-# agnoster is still installed and symlinked by setup.sh, so reverting the
-# prompt is just changing this value back to "agnoster".
-ZSH_THEME="spaceship"
+# Deliberately EMPTY: Starship renders the prompt now (see the init below), and
+# an oh-my-zsh theme would only fight it for $PROMPT — whichever ran last would
+# win. To go back to the old prompt instead, set this to "agnoster"; that theme
+# is still tracked here and still symlinked into place by setup.sh.
+ZSH_THEME=""
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -76,18 +78,16 @@ plugins=(git zsh-syntax-highlighting)
 
 source $ZSH/oh-my-zsh.sh
 
-# Spaceship prompt config. Keep this below `source $ZSH/oh-my-zsh.sh` — that
-# line is where oh-my-zsh loads the theme, and after it is the position
-# Spaceship documents for user config. (Spaceship 4.x fills its defaults with
-# `${VAR=default}` guards, so it won't clobber values set earlier, but not
-# every section is written that way and upstream only supports this order.)
-# Guarded so a machine without this repo checked out still gets a working shell.
-# `${(%):-%x}` is this file's own path; `:A` resolves the ~/.zshrc symlink to the
-# real file in the repo and `:h` takes its directory, so the repo works wherever
-# it is cloned.
-_spaceship_conf="${${(%):-%x}:A:h}/spaceship.zsh"
-[[ -f "$_spaceship_conf" ]] && source "$_spaceship_conf"
-unset _spaceship_conf
+# Starship prompt. This MUST stay below `source $ZSH/oh-my-zsh.sh`: that line is
+# where oh-my-zsh installs its own $PROMPT, so initialising Starship before it
+# would just get overwritten. Starship reads its config from
+# ~/.config/starship.toml, symlinked to starship/starship.toml in this repo by
+# setup.sh.
+#
+# Guarded on the binary existing so a machine without Starship installed (or one
+# where the brew step was skipped) still gets a working shell — it just falls
+# through to whatever ZSH_THEME above is set to.
+command -v starship >/dev/null && eval "$(starship init zsh)"
 
 # User configuration
 

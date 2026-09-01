@@ -1,0 +1,178 @@
+# Starship prompt — agnoster's colours and section order, pastel-powerline's
+# rounded segment shapes.
+#
+# Symlinked to ~/.config/starship.toml by setup.sh (setup_starship_config), so
+# edits here are live on the next prompt; no reinstall.
+#
+# WHY BASIC-8 COLOUR NAMES, NOT HEX: `blue`, `green`, `yellow`, `black`, `red`
+# and `cyan` resolve against the terminal's own palette, which is what agnoster
+# did. Ghostty's `theme` setting (ghostty/config) therefore still recolours the
+# prompt, and the prompt still matches the rest of the terminal. Hard-coding hex
+# would pin the prompt to one theme and break that.
+#
+# GLYPHS: the segment caps below are Nerd Font / Powerline private-use glyphs —
+#     left half-circle  (opens a segment)
+#     right half-circle (closes a segment)
+#     solid right arrow (joins two coloured segments)
+# They render as boxes without a Nerd Font; see README's prerequisites.
+
+# Single-line prompt with a blank line above it, like agnoster.
+add_newline = true
+
+# Section order mirrors agnoster's build_prompt():
+#   status -> virtualenv -> aws -> context -> dir -> git
+# Each module draws itself as a self-contained rounded pill — its own  cap, its
+# coloured body, its own  cap — rather than chaining `fg:<previous bg>` arrows.
+# That is deliberate: most of these sections are conditional (no venv, no AWS
+# profile, clean tree), and a chained scheme has to know which neighbour is
+# actually present to pick its transition colour, which Starship cannot express.
+# Self-contained pills compose in any combination, so the prompt is correct
+# whether zero or all of the optional sections are showing.
+format = """
+$status\
+$python\
+$aws\
+$username\
+$hostname\
+$directory\
+$git_branch\
+$git_status\
+$cmd_duration\
+$line_break\
+$character"""
+
+# --- status (agnoster prompt_status) ---------------------------------------
+# bg=black, with the same three indicators agnoster drew: last exit code in red,
+# a root shell in yellow, background jobs in cyan. Opens the bar with the
+# rounded left cap.
+[status]
+disabled = false
+format = '[](fg:black)[ $symbol$status ]($style)[](fg:black)'
+symbol = '✘ '
+style = 'fg:red bg:black'
+map_symbol = false
+pipestatus = true
+
+# Agnoster drew the root indicator (⚡, yellow) from prompt_status, not from the
+# user segment; Starship splits that off into `username`, so root is styled
+# there. `username` is otherwise agnoster's prompt_context (see below).
+
+[container]
+disabled = true
+
+# --- virtualenv (agnoster prompt_virtualenv) -------------------------------
+# bg=blue fg=black. Starship's `python` module carries the venv name.
+[python]
+format = '[](fg:blue)[ $virtualenv ](fg:black bg:blue)[](fg:blue)'
+style = 'fg:black bg:blue'
+detect_extensions = []
+detect_files = []
+detect_folders = []
+
+# --- aws (agnoster prompt_aws) ---------------------------------------------
+# bg=green fg=black, agnoster's non-production colours. Agnoster also switched to
+# bg=red fg=yellow for profiles whose name looked like production; that is NOT
+# reproduced here, because it keyed off a regex over the profile name and
+# Starship has no per-profile style override. If you want it back, the hook is
+# [aws.profile_aliases] plus a second, red-styled aws block — but the honest
+# state today is that every profile renders green.
+[aws]
+format = '[](fg:green)[ $symbol$profile$region ]($style)[](fg:green)'
+symbol = ' '
+style = 'fg:black bg:green'
+
+[aws.profile_aliases]
+
+# --- context (agnoster prompt_context) -------------------------------------
+# bg=black, user@host. Agnoster showed it only when it was surprising — a
+# non-default user, or an SSH session — so both modules stay in that spirit:
+# username appears for root or over SSH, hostname only over SSH.
+[username]
+format = '[](fg:black)[ $user ]($style)'
+style_user = 'fg:white bg:black'
+style_root = 'fg:yellow bg:black' # agnoster's root colour
+show_always = false
+
+[hostname]
+format = '[@$hostname](fg:white bg:black)[](fg:black)'
+ssh_only = true
+trim_at = '.'
+
+# --- dir (agnoster prompt_dir) ---------------------------------------------
+# bg=blue fg=black. Agnoster printed the shortened cwd and nothing else.
+[directory]
+format = '[](fg:blue)[ $path ]($style)[$read_only]($read_only_style)[](fg:blue)'
+style = 'fg:black bg:blue'
+truncation_length = 3
+truncate_to_repo = false
+read_only = ' '
+read_only_style = 'fg:red bg:blue'
+
+[directory.substitutions]
+'~' = ' ~'
+
+# --- git (agnoster prompt_git) ---------------------------------------------
+# Agnoster's one real piece of colour logic: bg=green fg=black when the working
+# tree is clean, bg=yellow fg=black when it is dirty. Starship has no "style the
+# branch differently if dirty" switch, so the two states are split across two
+# modules instead:
+#   * git_branch is the always-present GREEN pill holding the branch name, and
+#   * git_status is a YELLOW pill that appears only when the tree is dirty,
+#     carrying the indicator characters.
+# Clean tree => one green pill. Dirty tree => green pill + yellow pill, so the
+# yellow is what the eye lands on, which is the signal agnoster was sending.
+[git_branch]
+format = '[](fg:green)[ $symbol$branch ](fg:black bg:green)[](fg:green)'
+symbol = ' '
+
+# Dirty state: yellow, carrying agnoster's ✚ / ● / … indicators.
+[git_status]
+format = '([](fg:yellow)[ $all_status$ahead_behind ](fg:black bg:yellow)[](fg:yellow))'
+style = 'fg:black bg:yellow'
+conflicted = '~'
+ahead = '⇡${count}'
+behind = '⇣${count}'
+diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+untracked = '?'
+stashed = '⚑'
+modified = '!'
+staged = '+'
+renamed = '»'
+deleted = '✘'
+
+# --- command duration ------------------------------------------------------
+# Not an agnoster section; a plain uncoloured tail on the same line, shown only
+# for commands slower than 2s so the bar's shape is unchanged the rest of the
+# time. No $fill / right prompt — agnoster had neither.
+[cmd_duration]
+min_time = 2000
+format = '[ $duration](fg:yellow)'
+
+# --- prompt character ------------------------------------------------------
+# Agnoster ended the bar with a closing arrow and a bare `%`. Here the bar is
+# closed by each segment's own cap, and the input line below carries a plain
+# arrow: green when the last command succeeded, red when it failed (this is the
+# other half of what agnoster's RETVAL showed).
+[character]
+success_symbol = '[❯](bold green)'
+error_symbol = '[❯](bold red)'
+vimcmd_symbol = '[❮](bold green)'
+
+# Modules agnoster never drew. Left off so the prompt is agnoster's set of
+# sections and nothing more.
+[nodejs]
+disabled = true
+[ruby]
+disabled = true
+[package]
+disabled = true
+[golang]
+disabled = true
+[rust]
+disabled = true
+[java]
+disabled = true
+[docker_context]
+disabled = true
+[kubernetes]
+disabled = true
