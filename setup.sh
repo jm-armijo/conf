@@ -62,6 +62,38 @@ setup_zsh() {
   link "$REPO_DIR/zsh/agnoster.zsh-theme" "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" || return 1
 }
 
+# Spaceship is an upstream git repo, not a single file we can vendor into this
+# repo, so it can't be installed by symlinking a tracked file like every other
+# step here. It has to be cloned, then kept current with a pull. link() is wrong
+# for the clone directory — it backs the destination up and replaces it, so
+# every re-run would move the clone aside and re-clone from scratch, littering
+# $HOME with .backup.* copies. Clone-or-pull by hand instead, and use link()
+# only for the theme file, where backup + idempotency are exactly what we want.
+setup_spaceship() {
+  local themes="$HOME/.oh-my-zsh/custom/themes"
+  local dir="$themes/spaceship-prompt"
+
+  if ! [[ -d "$HOME/.oh-my-zsh" ]]; then
+    echo "skip: oh-my-zsh not installed"
+    return 1
+  fi
+
+  if [[ -d "$dir/.git" ]]; then
+    git -C "$dir" pull --ff-only || return 1
+  else
+    # git/gitconfig sets a global url."ssh://git@github.com/".insteadOf
+    # https://github.com/ rewrite, so this HTTPS URL resolves over SSH on a
+    # machine set up by this script — an SSH auth error here is not a typo.
+    mkdir -p "$themes" || return 1
+    git clone --depth=1 https://github.com/spaceship-prompt/spaceship-prompt.git "$dir" || return 1
+  fi
+
+  # oh-my-zsh only auto-discovers *.zsh-theme directly in the themes dir, never
+  # nested in a subdirectory, so the theme file has to be surfaced one level up.
+  link "$dir/spaceship.zsh-theme" "$themes/spaceship.zsh-theme" || return 1
+  echo "spaceship: installed (restart your shell to apply)"
+}
+
 setup_git() {
   # Symlink the whole global config so `git config --global` edits (aliases and
   # everything else) are written straight back into the repo file.
@@ -127,6 +159,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "Setting up from $REPO_DIR"
 
   run "zsh" setup_zsh
+  run "spaceship" setup_spaceship
   run "git" setup_git
   run "ghostty" setup_ghostty
   run "magnet" setup_magnet
