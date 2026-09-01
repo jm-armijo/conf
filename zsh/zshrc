@@ -8,7 +8,9 @@ export ZSH=$HOME/.oh-my-zsh
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
-ZSH_THEME="agnoster"
+# agnoster is still installed and symlinked by setup.sh, so reverting the
+# prompt is just changing this value back to "agnoster".
+ZSH_THEME="spaceship"
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -73,6 +75,14 @@ DISABLE_AUTO_TITLE="true"
 plugins=(git zsh-syntax-highlighting)
 
 source $ZSH/oh-my-zsh.sh
+
+# Spaceship prompt config. Keep this below `source $ZSH/oh-my-zsh.sh` — that
+# line is where oh-my-zsh loads the theme, and after it is the position
+# Spaceship documents for user config. (Spaceship 4.x fills its defaults with
+# `${VAR=default}` guards, so it won't clobber values set earlier, but not
+# every section is written that way and upstream only supports this order.)
+# Guarded so a machine without this repo checked out still gets a working shell.
+[[ -f "$HOME/code/conf/zsh/spaceship.zsh" ]] && source "$HOME/code/conf/zsh/spaceship.zsh"
 
 # User configuration
 
