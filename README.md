@@ -1,6 +1,6 @@
 # conf
 
-Personal configuration for **zsh**, **git**, **ghostty**, and the **Magnet** and **OBS** macOS apps.
+Personal configuration for **zsh** (with the **Spaceship** prompt), **git**, **ghostty**, and the **Magnet** and **OBS** macOS apps.
 
 ## Setup a new machine
 
@@ -15,6 +15,7 @@ cd ~/code/personal/conf
 The script:
 
 - Symlinks `zsh/zshrc` → `~/.zshrc` and `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
+- Clones (or pulls) the **Spaceship** prompt into `~/.oh-my-zsh/custom/themes/spaceship-prompt`, then symlinks its `spaceship.zsh-theme` one level up into `~/.oh-my-zsh/custom/themes/` — oh-my-zsh only discovers themes directly in that directory, never nested.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
 
@@ -37,7 +38,27 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
   ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
 ```
 
-The agnoster theme needs a Powerline-patched font. Install one and enable it in your terminal:
+The Spaceship prompt needs a **Nerd Font** — a stricter requirement than agnoster's
+Powerline-patched font, because Spaceship's section icons (git branch, node, ruby, …)
+are glyphs that only exist in the Nerd Font range. A Powerline font alone renders them
+as boxes or blanks:
+
+```bash
+brew install --cask font-meslo-lg-nerd-font
+```
+
+The terminal font is part of this repo (`ghostty/config`), so set it there — the symlink
+makes it live — rather than in a GUI:
+
+```
+font-family = MesloLGS Nerd Font
+```
+
+If you'd rather not install a Nerd Font, drop the icon-bearing sections (`git`, `package`,
+`node`, `ruby`) from `SPACESHIP_PROMPT_ORDER` in `zsh/spaceship.zsh`; the remaining
+sections are plain text.
+
+The agnoster fallback theme needs only a Powerline-patched font:
 
 ```bash
 git clone https://github.com/powerline/fonts.git --depth=1
@@ -104,5 +125,17 @@ cp -R "$OBS"/. "obs/$RES"/         # .gitignore keeps only the portable subset
 ## Editing config later
 
 - **zsh** — edit `~/.zshrc` or the theme directly; the symlink means changes land in the repo automatically. Commit when ready.
+- **prompt** — edit `zsh/spaceship.zsh` (sections, prompt character, truncation). It's symlink-live like the rest, so edits apply on the next shell; no reinstall. To revert to the old prompt, set `ZSH_THEME="agnoster"` in `zsh/zshrc` — `zsh/agnoster.zsh-theme` is still tracked and still installed.
 - **git** — edit `~/.gitconfig` or run `git config --global ...` as usual; the symlink means changes (aliases and everything else) land in `git/gitconfig` automatically. Commit when ready.
 - **ghostty** — edit `~/.config/ghostty/config` directly; the symlink means changes land in `ghostty/config` automatically. Commit when ready.
+
+## Committing
+
+A lefthook pre-commit hook runs `shellcheck` and `shfmt -d -i 2 -ci` on staged shell
+scripts, and `bats test/` on every commit. Install it once per clone, along with the
+three tools — without them commits fail:
+
+```bash
+brew install lefthook shellcheck shfmt bats-core
+lefthook install
+```
