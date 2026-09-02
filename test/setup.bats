@@ -423,11 +423,12 @@ claude_env() {
 
 @test "claude settings.json points at scripts this repo actually tracks" {
   local settings="${BATS_TEST_DIRNAME}/../claude/settings.json"
-  # settings.json names the hook and statusline by ~/.claude path. Those paths
-  # are symlinks into claude/scripts and claude/hooks, so renaming a script here
-  # without editing settings.json leaves Claude Code silently invoking nothing.
-  grep -q '~/.claude/scripts/statusline.sh' "$settings"
-  grep -q '~/.claude/hooks/block-inefficient-bash.sh' "$settings"
+  # settings.json names the hook and statusline by their ~/.claude path (either
+  # tilde-form or fully expanded). Those paths are symlinks into claude/scripts
+  # and claude/hooks, so renaming a script here without editing settings.json
+  # leaves Claude Code silently invoking nothing.
+  grep -qE '(~|/Users/[^"]*)/\.claude/scripts/statusline\.sh' "$settings"
+  grep -qE '(~|/Users/[^"]*)/\.claude/hooks/block-inefficient-bash\.sh' "$settings"
   [ -x "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" ]
   [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/block-inefficient-bash.sh" ]
 }
@@ -465,4 +466,48 @@ claude_env() {
   [ ! -e "${BATS_TEST_DIRNAME}/../zsh/spaceship.zsh" ]
   # agnoster stays: it is the documented fallback and setup_zsh still links it.
   [ -f "${BATS_TEST_DIRNAME}/../zsh/agnoster.zsh-theme" ]
+}
+
+@test "statusline writes nothing to stderr" {
+  # THE contract: Claude Code discards the entire statusline if the command
+  # writes a single byte to stderr, with no error shown anywhere. Two separate
+  # outages this session were exactly this -- md5sum resolving only in /sbin
+  # (absent from the hook PATH), and `ps` on a PID that had gone away. Both
+  # produced a perfectly good stdout and an invisible statusline.
+  #
+  # env -i is load-bearing: every earlier manual test inherited an interactive
+  # PATH containing /sbin and so could not reproduce the md5sum failure.
+  local script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
+  local payload err
+  err="${BATS_TEST_TMPDIR}/stderr"
+
+  for payload in \
+    '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/tmp"}}' \
+    '{}' \
+    'not json at all'; do
+    printf '%s' "$payload" |
+      env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" >/dev/null 2>"$err"
+    [ "$(wc -c <"$err" | tr -d ' ')" -eq 0 ]
+  done
+}
+
+@test "statusline exits zero and emits output on a degenerate payload" {
+  local script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
+  local out
+  out="${BATS_TEST_TMPDIR}/stdout"
+  printf '%s' '{}' |
+    env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" >"$out" 2>/dev/null
+  [ "$?" -eq 0 ]
+  [ -s "$out" ]
+}
+
+@test "statusline output is valid UTF-8" {
+  # The bar is built by repeat count, not by measuring length, because awk's
+  # length() counts BYTES in this locale and the block glyph is 3 of them --
+  # a length-based loop sliced the final glyph mid-sequence and emitted
+  # invalid UTF-8. iconv is the check that would catch that regression.
+  local script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
+  printf '%s' '{"workspace":{"current_dir":"/tmp"}}' |
+    env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" 2>/dev/null |
+    iconv -f UTF-8 -t UTF-8 >/dev/null
 }

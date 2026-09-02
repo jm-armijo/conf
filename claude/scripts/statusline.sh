@@ -1,4 +1,10 @@
 #!/bin/bash
+# Claude Code discards the WHOLE statusline if this command writes a single byte
+# to stderr. Individual call sites are guarded too, but this is the structural
+# backstop: any future command added below cannot silently kill the statusline.
+# Set STATUSLINE_DEBUG=1 to unmute stderr when diagnosing.
+[ -z "${STATUSLINE_DEBUG:-}" ] && exec 2>/dev/null
+
 input=$(cat)
 
 # ANSI Colour Codes
@@ -160,7 +166,7 @@ HEADER="$(printf '\033[38;5;%sm%s\033[0m' "$BAR_COLOR" "$BAR_BODY")"
 TIME=$(date +%H:%M:%S)
 
 # Claude Code process metrics via Parent PID ($PPID = the `claude` process)
-read -r cpu_raw mem_kb <<<"$(ps -p "$PPID" -o %cpu=,rss=)"
+read -r cpu_raw mem_kb <<<"$(ps -p "$PPID" -o %cpu=,rss= 2>/dev/null)"
 CPU=$(awk -v cpu="${cpu_raw:-0}" 'BEGIN {printf "%.0f%%", cpu}')
 MEM=$(awk -v mem="${mem_kb:-0}" 'BEGIN {
     if (mem > 1048576) printf "%.1fG", mem/1048576

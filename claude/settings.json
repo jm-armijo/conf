@@ -41,7 +41,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/scripts/statusline.sh",
+    "command": "/Users/jm/.claude/scripts/statusline.sh",
     "padding": 1
   },
   "enabledPlugins": {

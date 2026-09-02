@@ -109,6 +109,37 @@ paths, so those two links are what make it work — renaming a script here witho
 editing `settings.json` leaves Claude Code silently invoking nothing. A test
 pins that pairing.
 
+### The statusline's one hard rule
+
+**Claude Code discards the entire statusline if the command writes a single byte
+to stderr** — no error, no partial render, the line just vanishes. Two separate
+outages traced to exactly this, and neither was visible from a normal shell:
+
+- `md5sum` resolves only in `/sbin`, which is **not** on the PATH Claude Code
+  gives the hook, so it printed `command not found` to stderr. Every manual test
+  passed because an interactive PATH includes `/sbin`.
+- `ps -p "$PPID"` writes to stderr once that PID has gone away.
+
+`statusline.sh` therefore redirects fd 2 to `/dev/null` for the whole script as a
+structural backstop, so a command added later cannot silently kill the line. To
+diagnose it, unmute stderr:
+
+```bash
+echo '{}' | STATUSLINE_DEBUG=1 ~/.claude/scripts/statusline.sh
+```
+
+Reproduce the real hook environment with `env -i` — an inherited PATH hides this
+whole class of failure:
+
+```bash
+echo '{}' | env -i PATH=/usr/bin:/bin HOME="$HOME" ~/.claude/scripts/statusline.sh
+```
+
+Three tests pin the contract: stderr stays empty across valid, empty and
+malformed payloads; exit is zero with non-empty output; and the output is valid
+UTF-8 (the bar glyph is 3 bytes, and a byte-based width calculation once sliced
+it mid-sequence).
+
 ### Why skills are linked one-by-one
 
 Claude Code's **plugins write into `~/.claude/skills` too** — the ruby-lsp plugin
