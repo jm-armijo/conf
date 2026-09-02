@@ -105,7 +105,7 @@ one symlink per file, so the rest stays machine-local and out of git:
 | `claude/scripts/statusline.sh` | `~/.claude/scripts/statusline.sh` |
 | `claude/lib/session-colors.sh` | `~/.claude/lib/session-colors.sh` — the colour database, also sourceable from your shell |
 | `claude/hooks/block-inefficient-bash.sh` | `~/.claude/hooks/block-inefficient-bash.sh` |
-| `claude/hooks/plan-artifacts-on-exit.sh` | `~/.claude/hooks/plan-artifacts-on-exit.sh` — makes plan mode emit `PLAN.html`/`TODO.md` |
+| `claude/hooks/plan-artifacts-on-exit.sh` | `~/.claude/hooks/plan-artifacts-on-exit.sh` — renders a plan to `PLAN.html`/`TODO.md` in the browser before you are asked to approve it |
 | `claude/skills/<skill>/` | `~/.claude/skills/<skill>/` — one link per skill |
 
 **One file is renamed across the link.** Claude Code requires the name

@@ -518,6 +518,21 @@ plan_hook() {
   [ "$status" -eq 0 ]
 }
 
+@test "plan gate names the browser review in what it tells the model" {
+  local repo="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+
+  bats_run plan_hook "$repo"
+  [ "$status" -eq 2 ]
+  # The gate exists so the plan is REVIEWABLE before approval, not so two files
+  # exist. A message that only demands the artifacts gets obeyed as paperwork on
+  # the way out of plan mode, which renders the plan at the moment it stops being
+  # worth reading. Pin the intent, not just the block.
+  [[ "$output" == *"browser"* ]]
+  [[ "$output" == *"before asking for approval"* ]]
+}
+
 @test "plan gate fails open on malformed input" {
   bats_run bash -c "printf 'not json' | '${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh'"
   # A hook that errors on an unexpected payload would wedge plan mode entirely.

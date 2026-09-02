@@ -49,9 +49,17 @@ plan is a separate skill (`plan-execution`).
 
 4. Open the plan: `open PLAN.html`
 
-5. **Halt** for approval. Do not start implementing. If changes are requested,
-   iterate on `PLAN.html` and `TODO.md` **together** — the architecture and the
-   increment list must never disagree.
+   This is the review copy. The user reads the plan in the browser, not in the
+   terminal — that is what these files are for.
+
+5. **Halt** for approval. Do not start implementing.
+
+   Approval comes *after* the browser view, never before it: render first, then
+   ask. Asking for approval and rendering afterwards defeats the skill entirely.
+
+   Expect to iterate. When changes are requested, edit `PLAN.html` and `TODO.md`
+   **together** — the architecture and the increment list must never disagree —
+   re-open `PLAN.html`, and halt again. Repeat until the user approves.
 
 ## Sizing an increment
 
