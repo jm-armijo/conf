@@ -268,6 +268,7 @@ claude_env() {
   echo "#!/bin/bash" >"$REPO_DIR/claude/scripts/statusline.sh"
   echo "#!/bin/bash" >"$REPO_DIR/claude/lib/session-colors.sh"
   echo "#!/bin/bash" >"$REPO_DIR/claude/hooks/block-inefficient-bash.sh"
+  echo "#!/bin/bash" >"$REPO_DIR/claude/hooks/plan-artifacts-on-exit.sh"
 
   local skill
   for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
@@ -286,7 +287,7 @@ claude_env() {
   local f
   for f in settings.json statusline.conf context-window.conf \
     scripts/statusline.sh lib/session-colors.sh \
-    hooks/block-inefficient-bash.sh; do
+    hooks/block-inefficient-bash.sh hooks/plan-artifacts-on-exit.sh; do
     [ -L "$HOME/.claude/$f" ]
     [ "$(readlink "$HOME/.claude/$f")" = "$REPO_DIR/claude/$f" ]
   done
@@ -451,8 +452,76 @@ claude_env() {
   # leaves Claude Code silently invoking nothing.
   grep -qE '(~|/Users/[^"]*)/\.claude/scripts/statusline\.sh' "$settings"
   grep -qE '(~|/Users/[^"]*)/\.claude/hooks/block-inefficient-bash\.sh' "$settings"
+  grep -qE '(~|/Users/[^"]*)/\.claude/hooks/plan-artifacts-on-exit\.sh' "$settings"
   [ -x "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" ]
   [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/block-inefficient-bash.sh" ]
+  [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh" ]
+}
+
+# --- plan-artifacts-on-exit ------------------------------------------------
+#
+# The gate that makes plan mode emit PLAN.html/TODO.md without the skill being
+# named. Its one real hazard is looping: it blocks ExitPlanMode, the model runs
+# the skill and exits again, and if the second call blocked too the session
+# would never leave plan mode. So the "allow once artifacts exist" branch is the
+# test that matters, not the block.
+
+plan_hook() {
+  printf '{"cwd":"%s","tool_name":"ExitPlanMode"}' "$1" |
+    "${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh"
+}
+
+@test "plan gate blocks ExitPlanMode when the artifacts are missing" {
+  local repo="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+
+  bats_run plan_hook "$repo"
+  # exit 2 is the documented "block and feed stderr back to the model" code;
+  # anything else (0, or a crash) silently lets the plan through unrendered.
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"plan-writing"* ]]
+}
+
+@test "plan gate allows the retry once both artifacts exist" {
+  local repo="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+  touch "$repo/PLAN.html" "$repo/TODO.md"
+
+  bats_run plan_hook "$repo"
+  # THE regression test: without this branch the hook re-blocks its own retry
+  # and plan mode becomes inescapable.
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "plan gate still blocks when only one of the two artifacts exists" {
+  local repo="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+  touch "$repo/PLAN.html"
+
+  bats_run plan_hook "$repo"
+  # Only PLAN.html: the skill ran and failed partway. Blocking again would be a
+  # loop with no way out, so this stays a block only while BOTH are absent.
+  [ "$status" -eq 2 ]
+}
+
+@test "plan gate ignores directories that are not git repos" {
+  local scratch="${BATS_TEST_TMPDIR}/scratch"
+  mkdir -p "$scratch"
+
+  bats_run plan_hook "$scratch"
+  # No repo means no branch, no PR and no increments worth the name; a scratch
+  # directory must not be forced through a PR-shaped workflow.
+  [ "$status" -eq 0 ]
+}
+
+@test "plan gate fails open on malformed input" {
+  bats_run bash -c "printf 'not json' | '${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh'"
+  # A hook that errors on an unexpected payload would wedge plan mode entirely.
+  [ "$status" -eq 0 ]
 }
 
 @test "every skill setup_claude_skills links has a SKILL.md" {

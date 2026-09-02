@@ -1,37 +1,45 @@
 ---
 name: plan-writing
-description: Write an implementation plan as PLAN.html (architecture and data flow) plus TODO.md (the work split into PR-sized increments), git-excluded and opened in the browser, then halt for approval. Use whenever planning a change, usually in plan mode, before any production code is written. Executing the resulting plan is the plan-execution skill's job, not this one's.
+description: Render a plan as PLAN.html plus a TODO.md of PR-sized increments, git-excluded and opened in the browser, then halt for approval. Use at the end of plan mode, or whenever writing an implementation plan, before any production code is written. Executing the result is the plan-execution skill's job.
 ---
 
 # Plan Writing
 
-You are the **Planner**. Design the architectural solution and emit the
-execution state machine. **Write no production code** — not a stub, not a
-scaffold. The two files below are the entire deliverable.
+Plan the work as you normally would. This skill is about **what the plan is
+written to**, not about what makes a plan good — it adds two output files and
+one halt, and changes nothing about how you research, design, or reason.
 
-Executing the plan is a separate skill (`plan-execution`). Do not start
-implementing, and do not restate the execution steps here — `TODO.md` carries
-them.
+Plan mode's own plan file stays as it is. `PLAN.html` and `TODO.md` are
+generated *from* the plan, alongside it.
+
+**Write no production code here** — not a stub, not a scaffold. Executing the
+plan is a separate skill (`plan-execution`).
 
 ## Procedure
 
 1. Read the baselines that ship with this skill:
-   - `assets/UI_TEMPLATE.html` — a fully worked example plan, not a blank form.
-     Reproduce its structure and its styling; replace its content.
+   - `assets/UI_TEMPLATE.html` — a worked example, not a blank form. Reproduce
+     its structure and styling; replace its content.
    - `assets/TODO_TEMPLATE.md` — the increment template, with placeholders to fill.
 
-   If `~/.config/claude-templates/UI_TEMPLATE.html` or
-   `~/.config/claude-templates/TODO_TEMPLATE.md` exist, those override the
-   bundled copies — a machine-local override is intentional.
+   `~/.config/claude-templates/{UI_TEMPLATE.html,TODO_TEMPLATE.md}` override the
+   bundled copies when present — a machine-local override is intentional.
 
-2. Generate **both** files in the repository root, in the same turn:
-   - **`PLAN.html`** — the architecture: the components touched, the data flow
-     between them, and the boundaries crossed. A diagram that restates the file
-     list is not a diagram; show what calls what and where state lands.
-     It must also **explain how the work splits into increments, and why** —
-     that split is a judgement call the user reviews, so state the reasoning.
-   - **`TODO.md`** — the increments, each carrying the full six-step checklist
-     from the template, copied verbatim.
+2. Write **both** files to the repository root, in the same turn:
+
+   - **`PLAN.html`** — the plan you already wrote, rendered for the browser: the
+     components touched, the data flow between them, the boundaries crossed. A
+     diagram that restates the file list is not a diagram; show what calls what
+     and where state lands.
+
+     It must also **say how the work splits into increments, and why**. That
+     split is the one judgement call the user is reviewing.
+
+   - **`TODO.md`** — the same work as increments, each carrying the six-step
+     checklist from the template, copied verbatim.
+
+   Sections the plan does not need are dropped rather than filled with filler.
+   The template is a baseline, not a quota.
 
 3. Exclude both locally — they are working artifacts, never committed:
 
@@ -39,51 +47,42 @@ them.
    grep -q "^PLAN.html$" .git/info/exclude || printf 'PLAN.html\nTODO.md\n' >> .git/info/exclude
    ```
 
-4. Open the plan:
+4. Open the plan: `open PLAN.html`
 
-   ```bash
-   open PLAN.html
-   ```
-
-5. **Halt.** Ask the user for approval and do not start implementing.
-   If modifications are requested, iterate on `PLAN.html` and `TODO.md`
-   **simultaneously** — the architecture and the increment list must never
-   disagree.
+5. **Halt** for approval. Do not start implementing. If changes are requested,
+   iterate on `PLAN.html` and `TODO.md` **together** — the architecture and the
+   increment list must never disagree.
 
 ## Sizing an increment
 
-This is the one real judgement call in planning, and the thing the user is
-reviewing when they read `TODO.md`.
+The one thing here that constrains the plan's *shape*, because it determines
+what lands in each PR.
 
 **An increment is a self-contained slice of work worth a pull request on its
-own.** Not one function and its tests — that is too small to be worth opening a
-PR for. A reviewer should be able to read it, judge it, and merge it by itself.
+own.** Not one function and its tests — too small to be worth opening a PR for.
+A reviewer should be able to read it, judge it, and merge it by itself.
 
-There is no formula; it depends on the work, so apply judgement and defend the
+There is no formula; it depends on the work. Apply judgement, and defend the
 split in `PLAN.html`. When in doubt, err toward **too large rather than too
 small** — a PR not worth reviewing is the wrong unit.
 
-TDD operates *inside* an increment, not across increments: write a test, add
-code, write a test, add code, until the increment's work is finished. Splitting
-the general case and the edge case into separate commits is wrong — both belong
-to the same increment.
+TDD operates *inside* an increment, not across increments: test, code, test,
+code, until the increment's work is done, all in one commit. Splitting the
+general case from its edge case across increments is wrong — both belong to the
+same one.
 
-Increments are executed strictly in order, one PR each, so sequence them by
-dependency.
+Increments run strictly in order, one PR each, so sequence them by dependency.
 
-## Ask before assuming
-
-Settle these while planning, since they change what `TODO.md` says:
+## Settle before halting
 
 - The `/code-review` level, if the user wants something other than `high`.
-- Anything ambiguous about scope. Record what is deliberately excluded under
-  **Out of scope** so it cannot drift back in mid-execution.
+- What is deliberately **out of scope**, recorded in `TODO.md` so it cannot
+  drift back in mid-execution.
 
 ## Constraints
 
-- The plan name in `<title>` and the page heading names the *change*, not the
-  repository. "Session colour retention sweep", not "conf".
-- `PLAN.html` is a single self-contained file: inline CSS, no external fetches.
-  It is opened from `file://`, where CDN loads and web fonts are unreliable.
-- Every TODO increment states its **verification command** — the exact
-  invocation that proves the increment landed.
+- The `<title>` and page heading name the *change*, not the repository —
+  "Session colour retention sweep", not "conf".
+- `PLAN.html` is one self-contained file: inline CSS, no external fetches. It is
+  opened from `file://`, where CDN loads and web fonts are unreliable.
+- Every increment states the **verification command** that proves it landed.

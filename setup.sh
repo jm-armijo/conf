@@ -183,6 +183,7 @@ setup_claude() {
   link "$REPO_DIR/claude/scripts/statusline.sh" "$HOME/.claude/scripts/statusline.sh" || return 1
   link "$REPO_DIR/claude/lib/session-colors.sh" "$HOME/.claude/lib/session-colors.sh" || return 1
   link "$REPO_DIR/claude/hooks/block-inefficient-bash.sh" "$HOME/.claude/hooks/block-inefficient-bash.sh" || return 1
+  link "$REPO_DIR/claude/hooks/plan-artifacts-on-exit.sh" "$HOME/.claude/hooks/plan-artifacts-on-exit.sh" || return 1
 }
 
 # Skills get one symlink per skill directory rather than a single symlink of
