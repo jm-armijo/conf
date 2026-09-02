@@ -229,32 +229,48 @@ A context-usage bar on top, then a metrics line:
   "optimise" it to `-uno`, which would stop counting untracked files. It runs once
   per refresh (~12 ms on this repo, against a ~65 ms whole-script budget) and is
   skipped entirely outside a repo.
-- **`PALETTE` is filtered by contrast, and the filter is the array's contract.**
+- **The palette is filtered by contrast, and the filter is its contract.**
   Because the foregrounds above are fixed rather than computed per background, the
-  background has to be legible under **both** yellow and green. Every candidate
-  16–255 was mapped to RGB via the 6×6×6 cube and scored with the WCAG relative-
-  luminance contrast ratio against xterm yellow `rgb(205,205,0)` and xterm green
-  `rgb(0,205,0)`; a code survives only if the **worse** of the two ratios is
+  background has to be legible under **both** yellow and green. Every candidate was
+  mapped to RGB via the 6×6×6 cube and scored with the WCAG relative-luminance
+  contrast ratio; a code survives only if the **worse** of the two ratios is
   ≥ 3.0 (WCAG AA for large text — the right bar for a single row of terminal
-  glyphs; 4.5 leaves only 6 codes, and *nothing* in the 256-colour space reaches
-  4.5 against both). The survivors were then reviewed by eye and cut to **16
-  codes** that are mutually distinguishable, not merely legible — the point of the
-  colour is to tell two open sessions apart at a glance, which similar shades
-  defeat even when both are readable.
+  glyphs).
+
+  **Score against the foregrounds the terminal actually renders.** `SGR 33` and
+  `SGR 32` resolve through the *terminal theme*, not through xterm's defaults:
+  under ghostty's `deep` they are `#d9bd26` and `#1cd915`, not `rgb(205,205,0)`
+  and `rgb(0,205,0)`. An earlier version of this palette was scored against the
+  xterm values and shipped **7 of its 16 codes below the bar** — `144` at 1.18,
+  `208` at 1.26, `255` at 1.61, `201` at 1.64, `228` at 1.77, `130` at 2.46,
+  `95` at 2.87. The swatch page they were picked from looked fine; the terminal
+  did not. A test pins the real constants.
+
+  Both real foregrounds are bright — relative luminance 0.513 and 0.499 — so a
+  3.0 ratio caps a qualifying background at 0.133 luminance, and **only 42 of the
+  256 codes** clear it. That is why the list is short, dark, and contains **no
+  orange at all**: every orange in the cube is too light against these two.
+
+  **Twelve, not sixteen.** The qualifying pool is small and clustered — `21`–`26`
+  is a straight blue ramp — so the best possible 16 could only reach a minimum
+  pairwise ΔE of 24.36, by including codes barely separable from ones already
+  present. Cutting to 12 raised the contrast floor from 3.04 to **3.52** and the
+  pairwise minimum to **24.36**. Running out of colours is not a failure mode:
+  duplicates are correct behaviour, and the assignment rule spreads them evenly.
 
   **There is no ban on reds.** An earlier version excluded them so the block would
   not read as an error state; that is superseded, because the block is always a
   solid painted field behind text rather than a lone glyph, and distinctness earns
-  more than the resemblance costs. `52`, `126`, `130`, `201` and `208` are in the
-  list on purpose.
+  more than the resemblance costs. `52`, `124` and `125` are in the list on
+  purpose.
 
   **The array's order is load-bearing.** Assignment walks the list in order, so
   entries sitting next to each other are handed to sessions likely to be open at
   the same time. The order is chosen to maximise the CIELab distance between
-  *adjacent* entries: minimum ΔE **90.0**, mean 116.0, versus 47.9 if the same 16
-  codes were simply sorted ascending (which would put `58` beside `95`). It is
-  **cyclic** — the 17th assignment wraps to the first entry, so the `130 → 18` pair
-  counts too (ΔE 130.8). Regenerate the array rather than hand-editing it; adding a
+  *adjacent* entries: minimum ΔE **91.3**, mean 109.8, versus 53.2 if the same 12
+  codes were simply sorted ascending (which would put `124` beside `125`). It is
+  **cyclic** — the 13th assignment wraps to the first entry, so the `53 → 58` pair
+  counts too (ΔE 96.9). Regenerate the array rather than hand-editing it; adding a
   code without re-running the ordering breaks the guarantee silently. Tests pin
   the ordering's minimum ΔE and record the per-code contrast ratios.
 - **The metrics wrap when they do not fit.** Normally the left and right groups

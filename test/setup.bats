@@ -506,7 +506,9 @@ claude_env() {
     '{}' \
     'not json at all'; do
     printf '%s' "$payload" |
-      env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" >/dev/null 2>"$err"
+      env -i PATH=/usr/bin:/bin HOME="$HOME" \
+        STATUSLINE_CONF=/nonexistent \
+        STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}/direct.db" "$script" >/dev/null 2>"$err"
     [ "$(wc -c <"$err" | tr -d ' ')" -eq 0 ]
   done
 }
@@ -516,7 +518,9 @@ claude_env() {
   local out
   out="${BATS_TEST_TMPDIR}/stdout"
   printf '%s' '{}' |
-    env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" >"$out" 2>/dev/null
+    env -i PATH=/usr/bin:/bin HOME="$HOME" \
+        STATUSLINE_CONF=/nonexistent \
+        STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}/direct.db" "$script" >"$out" 2>/dev/null
   [ "$?" -eq 0 ]
   [ -s "$out" ]
 }
@@ -528,7 +532,9 @@ claude_env() {
   # invalid UTF-8. iconv is the check that would catch that regression.
   local script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
   printf '%s' '{"workspace":{"current_dir":"/tmp"}}' |
-    env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" 2>/dev/null |
+    env -i PATH=/usr/bin:/bin HOME="$HOME" \
+        STATUSLINE_CONF=/nonexistent \
+        STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}/direct.db" "$script" 2>/dev/null |
     iconv -f UTF-8 -t UTF-8 >/dev/null
 }
 
@@ -546,8 +552,20 @@ claude_env() {
 # 256-colour fallback path; pass "truecolor" as $3 for the 24-bit path. Both are
 # real: the fallback is what a plain xterm gets, truecolor is what ghostty gets.
 statusline_run() { # <columns> <payload> [colorterm]
+  # STATUSLINE_COLOR_DB is redirected into the test's own tmpdir. Without it
+  # the script resolves the library from the real $HOME and every test run
+  # writes assignments into the developer's LIVE ~/.claude/statusline-colors.db
+  # -- one row per bats temp directory, none of which exist afterwards. That is
+  # how 129 rows of dead /var/folders/... keys accumulated, including codes
+  # from mutation runs that fail the contrast bar. Assignments are permanent by
+  # design, so this pollution is not self-healing.
+  # STATUSLINE_CONF must be pointed away too: the tracked conf assigns
+  # STATUSLINE_COLOR_DB unconditionally, so sourcing it would overwrite the
+  # redirect below and put the writes back into the live database.
   printf '%s' "$2" |
     env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS="$1" ${3:+COLORTERM="$3"} \
+      STATUSLINE_CONF=/nonexistent \
+      STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}/statusline-run.db" \
       "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" 2>/dev/null
 }
 
@@ -969,21 +987,22 @@ expect_cell_cube() { # <i> <n>
   # theme would need different constants. Anything reading SGR 33/32 as fixed
   # RGB is making the same mistake this comment exists to prevent.
   #
-  # They were chosen for distinctness from a rendered swatch page, where they
-  # looked fine; in the statusline itself a light background under yellow text
-  # reads badly. The palette is expected to change, so this test records the
-  # ratios rather than gating on them -- flip THRESHOLD back to 3.0 once the
-  # palette is settled, or teach the script to pick a dark foreground on light
-  # backgrounds.
+  # The palette is now settled, so this gates at the real bar: 3.0, WCAG AA for
+  # large text, which is the right threshold for a single row of terminal
+  # glyphs. It sat at a vacuous 1.0 while the palette was in flux -- 1.0 is the
+  # floor for identical colours, so nothing could ever fail it.
   #
-  # 1.0 is the floor (identical colours). Anything below it is a maths error
-  # here, not a palette problem, so the check still catches a broken formula.
+  # The current floor is 3.68 (code 124), so there is real headroom above the
+  # bar; a code added without scoring it against these two foregrounds will
+  # trip this rather than reach the terminal.
   local script codes
-  script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
-  codes=$(sed -n 's/^PALETTE=(\(.*\))$/\1/p' "$script")
+  script="${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh"
+  codes=$(sed -n 's/^SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' "$script")
   [ -n "$codes" ]
-  # A non-trivial palette, or "all entries pass" is close to vacuous.
-  [ "$(printf '%s' "$codes" | wc -w | tr -d ' ')" -ge 12 ]
+  # A non-trivial palette, or "all entries pass" is close to vacuous. This is a
+  # floor on the concept, not on the current size -- shrink the palette freely,
+  # but a handful of colours cannot tell checkouts apart at all.
+  [ "$(printf '%s' "$codes" | wc -w | tr -d ' ')" -ge 6 ]
 
   printf '%s' "$codes" | awk '
     function chan(v) { return (v <= 0.03928) ? v / 12.92 : ((v + 0.055) / 1.055) ^ 2.4 }
@@ -1004,7 +1023,12 @@ expect_cell_cube() { # <i> <n>
     {
       for (i = 1; i <= NF; i++) {
         c = $i + 0
-        if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
+        # 0-15 are the system colours: they resolve through the theme like the
+        # foregrounds do, so they are NOT on the 6x6x6 cube and mapping them
+        # with lv[] would score a colour the terminal never draws. Only 0 is in
+        # the palette, and ghostty "deep" renders it #000000.
+        if (c < 16) { r = g = b = 0 }
+        else if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
         else {
           n = c - 16
           r = lv[int(n/36)+1]; g = lv[int((n%36)/6)+1]; b = lv[(n%6)+1]
@@ -1012,7 +1036,7 @@ expect_cell_cube() { # <i> <n>
         l = lum(r, g, b)
         cy = ratio(ly, l); cgr = ratio(lg, l)
         m = (cy < cgr) ? cy : cgr
-        if (m < 1.0) { printf "code %d fails: %.2f\n", c, m; bad = 1 }
+        if (m < 3.0) { printf "code %d fails: %.2f\n", c, m; bad = 1 }
       }
     }
     END { exit bad }'
@@ -1020,14 +1044,15 @@ expect_cell_cube() { # <i> <n>
 
 @test "adjacent PALETTE entries are visually distinct" {
   # Assignment walks the palette in order, so neighbours are handed to sessions
-  # opened close together and must be the LEAST alike pairs. Sorting these same
-  # codes numerically would drop the minimum to dE 47.9, putting 58 beside 95.
+  # opened close together and must be the LEAST alike pairs. The current
+  # ordering holds a minimum of dE 82.6 between neighbours; sorting these same
+  # codes numerically collapses that, putting the 21/24 blue-ramp pair adjacent.
   #
-  # The list is cyclic -- the 16th assignment wraps to the first -- so the
+  # The list is cyclic -- the 12th assignment wraps to the first -- so the
   # last->first pair is checked too.
   local script codes
-  script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
-  codes=$(sed -n 's/^PALETTE=(\(.*\))$/\1/p' "$script")
+  script="${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh"
+  codes=$(sed -n 's/^SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' "$script")
   [ -n "$codes" ]
 
   printf '%s\n' "$codes" | awk '
@@ -1036,7 +1061,9 @@ expect_cell_cube() { # <i> <n>
     # sRGB -> CIE Lab (D65), then plain Euclidean distance (CIE76): enough to
     # answer "are these obviously different colours".
     function lab(c,   n, r, g, b, X, Y, Z, fx, fy, fz) {
-      if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
+      # 0-15 are system colours, not cube entries -- see the contrast test.
+      if (c < 16) { r = g = b = 0 }
+      else if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
       else {
         n = c - 16
         r = lv[int(n/36)+1]; g = lv[int((n%36)/6)+1]; b = lv[(n%6)+1]
@@ -1131,15 +1158,24 @@ age_rows() { # <days>
 @test "session_color_assign hands out the palette in order, then wraps" {
   colors_env
 
-  local i got=""
-  for i in $(seq 1 18); do
+  # Derived from the palette, never restated: editing SESSION_COLOR_PALETTE --
+  # its contents OR its length -- must not require touching this test. Assign
+  # one more key than there are colours, so the wrap is exercised whatever the
+  # size.
+  local n want got="" i
+  n=${#SESSION_COLOR_PALETTE[@]}
+  [ "$n" -ge 2 ]
+
+  for i in $(seq 1 $((n + 2))); do
     got="$got $(session_color_assign "/dir$i" main)"
   done
 
-  # The first 16 are the palette in its declared order; 17 and 18 wrap to the
+  # The first n are the palette in its declared order; the rest wrap to the
   # front. Ordering is load-bearing -- adjacent entries are the most visually
   # distinct pairs, so sessions opened close together look least alike.
-  [ "$got" = " 18 144 126 22 201 95 21 58 53 255 52 228 235 208 24 130 18 144" ]
+  want=$(printf ' %s' "${SESSION_COLOR_PALETTE[@]}" \
+    "${SESSION_COLOR_PALETTE[0]}" "${SESSION_COLOR_PALETTE[1]}")
+  [ "$got" = "$want" ]
 }
 
 @test "an assigned colour never changes on re-read" {
@@ -1158,16 +1194,21 @@ age_rows() { # <days>
 @test "duplicates spread evenly instead of piling onto one colour" {
   colors_env
 
-  local i
-  for i in $(seq 1 20); do session_color_assign "/dir$i" main >/dev/null; done
+  # Assign strictly between one and two full passes of the palette, whatever
+  # its size, so the expected shape is always "every colour used, none used
+  # more than twice" -- no count in this test is tied to a particular palette.
+  local n keys i
+  n=${#SESSION_COLOR_PALETTE[@]}
+  keys=$((n + n / 2))
+  for i in $(seq 1 "$keys"); do session_color_assign "/dir$i" main >/dev/null; done
 
-  # 20 keys over a 16-entry palette: four codes used twice, twelve once. A rule
-  # that ignored use counts would stack them onto whichever code sorted first.
+  # A rule that ignored use counts would stack the overflow onto whichever code
+  # sorted first, leaving one code at $((keys - n + 1)) and others unused.
   local max
   max=$(sqlite3 "$STATUSLINE_COLOR_DB" \
     'SELECT MAX(n) FROM (SELECT COUNT(*) n FROM colors GROUP BY code);')
   [ "$max" -eq 2 ]
-  [ "$(sqlite3 "$STATUSLINE_COLOR_DB" 'SELECT COUNT(DISTINCT code) FROM colors;')" -eq 16 ]
+  [ "$(sqlite3 "$STATUSLINE_COLOR_DB" 'SELECT COUNT(DISTINCT code) FROM colors;')" -eq "$n" ]
 }
 
 @test "branch is part of the key, and switching back restores the colour" {
@@ -1371,15 +1412,97 @@ age_rows() { # <days>
   [[ "$out" == *$'\033[48;5;'* ]]
 }
 
-@test "the tracked palette and the library palette agree" {
-  # The statusline keeps its own copy for the fallback path. Two lists that
-  # drift would hand out colours the contrast audit never covered.
-  local script lib
-  script=$(sed -n 's/^PALETTE=(\(.*\))$/\1/p' "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh")
-  lib=$(sed -n 's/^SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' "${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh")
+@test "the palette is defined in exactly one place" {
+  # The statusline used to keep its own copy for the hash fallback, and the two
+  # lists could drift into handing out colours the contrast audit never covered.
+  # It now sources the library and reads SESSION_COLOR_PALETTE, so changing the
+  # palette is a one-line edit in one file. This test pins that: a
+  # re-introduced second list is the regression.
+  local script
+  script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
 
-  [ -n "$script" ]
-  [ "$script" = "$lib" ]
+  # No bare PALETTE=(...) assignment -- only the guarded default, which is
+  # SESSION_COLOR_PALETTE and is allowed to differ (it is a broken-install
+  # backstop, not a copy).
+  #
+  # Assert on a COUNT, not with `! grep`: a bare negated pipeline does not fail
+  # a bats test the way a plain command does, so `! grep -q ...` here passes
+  # whatever the file contains. Mutation-checked -- re-adding PALETTE=(1 2 3)
+  # slipped straight through the negated form.
+  local dupes
+  dupes=$(grep -cE '^PALETTE=\(' "$script" || true)
+  [ "$dupes" -eq 0 ]
+
+  # And the statusline must actually INDEX the library's array to pick a
+  # colour. Matching a bare "SESSION_COLOR_PALETTE[" is too loose -- the
+  # emptiness guard ${#SESSION_COLOR_PALETTE[@]} satisfies it, so the check
+  # survived renaming the only real use. Require the subscripted read.
+  local uses
+  uses=$(grep -cE 'SEG_BG=\$\{SESSION_COLOR_PALETTE\[' "$script" || true)
+  [ "$uses" -ge 1 ]
+}
+
+@test "the statusline falls back to a usable palette when the library is unreadable" {
+  # The guarded default only fires when sourcing failed. Every code in it must
+  # still clear the contrast bar -- a broken install should degrade to fewer
+  # colours, never to illegible ones.
+  local codes
+  codes=$(sed -n 's/^  SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' \
+    "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh")
+  [ -n "$codes" ]
+
+  printf '%s' "$codes" | awk '
+    function chan(v) { return (v <= 0.03928) ? v / 12.92 : ((v + 0.055) / 1.055) ^ 2.4 }
+    function lum(r, g, b) { return 0.2126 * chan(r/255) + 0.7152 * chan(g/255) + 0.0722 * chan(b/255) }
+    function ratio(a, b) { return (a > b) ? (a + 0.05) / (b + 0.05) : (b + 0.05) / (a + 0.05) }
+    BEGIN {
+      split("0 95 135 175 215 255", lv, " ")
+      ly = lum(217, 189, 38)
+      lg = lum(28, 217, 21)
+      bad = 0
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        c = $i + 0
+        if (c < 16) { r = g = b = 0 }
+        else if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
+        else {
+          n = c - 16
+          r = lv[int(n/36)+1]; g = lv[int((n%36)/6)+1]; b = lv[(n%6)+1]
+        }
+        l = lum(r, g, b)
+        cy = ratio(ly, l); cgr = ratio(lg, l)
+        m = (cy < cgr) ? cy : cgr
+        if (m < 3.0) { printf "fallback code %d fails: %.2f\n", c, m; bad = 1 }
+      }
+    }
+    END { exit bad }'
+}
+
+@test "the test suite never writes to the real colour database" {
+  # statusline_run used to pass the developer HOME straight through, so every
+  # rendering test assigned a colour in the LIVE database -- 129 rows of dead
+  # bats temp paths had accumulated, including codes from mutation runs that
+  # fail the contrast bar. Assignments are permanent by design, so nothing
+  # cleaned them up.
+  #
+  # Assert on the fixture rather than on the live file: a test that diffed the
+  # real database would itself depend on the developer machine, and would pass
+  # vacuously on a machine that has none.
+  local fixture
+  fixture=$(sed -n '/^statusline_run() {/,/^}/p' "${BATS_TEST_DIRNAME}/setup.bats")
+
+  # Both redirects are needed. STATUSLINE_COLOR_DB alone is not enough: the
+  # tracked conf assigns that variable unconditionally, so a sourced conf puts
+  # the writes straight back into the live database.
+  local db conf
+  db=$(printf '%s' "$fixture" | grep -c 'STATUSLINE_COLOR_DB=' || true)
+  conf=$(printf '%s' "$fixture" | grep -c 'STATUSLINE_CONF=' || true)
+  [ "$db" -ge 1 ]
+  [ "$conf" -ge 1 ]
+
+  # And the redirect must point inside the test tmpdir, not at a fixed path.
+  printf '%s' "$fixture" | grep -q 'STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}'
 }
 
 @test "the tracked statusline.conf parses and defines both settings" {

@@ -40,7 +40,7 @@ pre-commit:
     test-count:
       run: |
         n=$(bats test/ --count)
-        if [ "$n" -lt 66 ]; then
-          echo "bats sees only $n tests (expected >= 66) -- a .bats file probably stopped parsing partway through"
+        if [ "$n" -lt 68 ]; then
+          echo "bats sees only $n tests (expected >= 68) -- a .bats file probably stopped parsing partway through"
           exit 1
         fi

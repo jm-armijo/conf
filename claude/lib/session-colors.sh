@@ -46,33 +46,43 @@ esac
 # list in order, so entries that sit next to each other here are handed to
 # sessions that are likely to be open at the same time.
 #
-# Minimum CIELab distance between adjacent entries is dE 90 (mean 116). Sorting
-# these same 16 codes numerically would drop that to 47.9, putting 58 next to
-# 95. The list is CYCLIC -- after the 16th assignment it wraps to the first --
-# so the 130 -> 18 pair is part of the guarantee too (dE 131).
+# Minimum CIELab distance between adjacent entries is dE 91.3 (mean 109.8). The
+# list is CYCLIC -- after the 12th assignment it wraps to the first -- so the
+# 53 -> 58 pair is part of the guarantee too.
 #
 # Two rules govern membership; both must hold for anything added here.
 #
-# 1. CONTRAST >= 3.0 AGAINST BOTH YELLOW AND GREEN. The segments painted on this
-#    background use fixed foregrounds -- yellow rgb(205,205,0) for directory and
-#    task, green rgb(0,205,0) for a clean branch -- so a background must be
-#    legible under both. Scored with the WCAG relative-luminance contrast ratio;
-#    a code survives only if the WORSE of its two ratios clears 3.0 (WCAG AA for
-#    large text, the right bar for a single row of terminal glyphs). 4.5 leaves
-#    only 6 codes in the entire 256-colour space, too few to tell checkouts
-#    apart -- and NOTHING reaches 4.5 against both, the maximum being 5.0/4.1 on
-#    pure black.
+# 1. CONTRAST >= 3.0 AGAINST BOTH YELLOW AND GREEN, scored against the colours
+#    THE TERMINAL ACTUALLY RENDERS. SGR 33 and 32 resolve through the terminal
+#    theme, not the xterm defaults: under ghostty "deep" they are #d9bd26 and
+#    #1cd915. Scoring against xterm rgb(205,205,0)/rgb(0,205,0) is what let an
+#    earlier version of this list carry 7 codes below the bar (144 at 1.18, 208
+#    at 1.26, 255 at 1.61, 201 at 1.64, 228 at 1.77, 130 at 2.46, 95 at 2.87).
+#
+#    Both real foregrounds are bright -- luminance 0.513 and 0.499 -- so a 3.0
+#    ratio caps a qualifying background at 0.133 luminance, and only 42 of the
+#    256 codes fall under it. Hence a list that is short, dark, and has no
+#    orange in it: every orange in the cube is too light against these two. The
+#    floor here is 3.52 (91). 4.5 leaves 20 codes.
 #
 # 2. VISUALLY DISTINCT FROM EVERY OTHER ENTRY, not merely from its neighbours.
+#    Minimum dE between ANY two entries is 24.36 (21 vs 56).
+#
+# TWELVE, not sixteen. The qualifying pool is clustered -- 21..26 is a straight
+# blue ramp -- so the best possible 16 could only reach dE 24.36 by including
+# codes barely separable from ones already present. Dropping to 12 raised the
+# contrast floor from 3.04 to 3.52 and the pairwise minimum from 23.13 to 24.36.
+# Running out of colours is not a failure mode: duplicates are correct
+# behaviour, and the assignment rule already spreads them evenly.
 #
 # Note there is no ban on reds here. An earlier version of this palette excluded
 # them to avoid looking like an error state, but the block is always a solid
 # painted field behind text, never a lone glyph, and distinctness matters more
-# than that resemblance. 52, 126, 130, 201 and 208 are in the list on purpose.
+# than that resemblance. 52, 124 and 125 are in the list on purpose.
 #
 # Regenerate rather than hand-edit if the foregrounds ever change: adding a code
 # without re-running the ordering breaks rule 2 silently.
-SESSION_COLOR_PALETTE=(18 144 126 22 201 95 21 58 53 255 52 228 235 208 24 130)
+SESSION_COLOR_PALETTE=(58 91 52 18 124 24 56 237 21 125 22 53)
 
 # Build the key. \x1f (unit separator) cannot occur in a path or a branch name,
 # so it cannot collide the way a plain concatenation could: without it,

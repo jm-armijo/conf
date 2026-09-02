@@ -165,28 +165,17 @@ BAR_MARGIN=${STATUSLINE_BAR_MARGIN:-12}
 COLS=$((COLS - BAR_MARGIN))
 [ "$COLS" -lt 1 ] && COLS=1
 
-# Fallback palette for the dir/branch/task block, used ONLY when the colour
-# database is unreachable (see below). The database is the normal source, and it
-# carries its own copy of this list in SESSION_COLOR_PALETTE; keep the two in
-# sync if either changes.
+# The palette lives in claude/lib/session-colors.sh as SESSION_COLOR_PALETTE
+# and is NOT duplicated here -- the library is sourced below, before anything
+# needs a colour, so both the database path and the hash fallback read the same
+# array. Changing the palette means editing that one list; see the comment
+# there for the contrast rule and the ordering constraint that govern it.
 #
-# ONE rule produced this list.
-#
-# CONTRAST >= 3.0 AGAINST BOTH YELLOW AND GREEN. The segments painted on this
-#    background are now fixed yellow (dir, task) and yellow-or-green (branch),
-#    not a computed per-background foreground, so the background must be legible
-#    under BOTH. Each candidate 16-255 was mapped to RGB (6x6x6 cube:
-#    code = 16 + 36r + 6g + b, channels 0-5 -> {0,95,135,175,215,255}; 232-255 is
-#    the grey ramp) and scored with the WCAG relative-luminance contrast ratio
-#    against xterm yellow rgb(205,205,0) and xterm green rgb(0,205,0). A code
-#    survives only if the WORSE of the two ratios is >= 3.0 -- WCAG AA for large
-#    text, which is the right bar for a single row of terminal glyphs; 4.5 (AA
-#    body text) leaves only 6 codes, too few to distinguish checkouts.
-#
-# The list is ordered so consecutive entries are as unlike each other as
-# possible (minimum CIELab dE 90 between neighbours, cyclically), because
-# assignment hands them out in order.
-PALETTE=(18 144 126 22 201 95 21 58 53 255 52 228 235 208 24 130)
+# A last-resort literal is declared AFTER the source below, for the case where
+# the library cannot be read at all. It is deliberately a few obviously-safe
+# darks rather than a copy of the real list: a stale duplicate that silently
+# disagreed would be worse than an obviously reduced one, and reaching it means
+# the install is already broken.
 
 # The colour is RECORDED, not derived.
 #
@@ -201,6 +190,13 @@ if [ -r "$SESSION_COLORS_LIB" ]; then
   # shellcheck source=/dev/null
   . "$SESSION_COLORS_LIB" 2>/dev/null
   SEG_BG=$(session_color_assign "$DIR_RAW" "$BRANCH" 2>/dev/null)
+fi
+
+# Only fires when the source above did not happen or did not define the array.
+# In the normal case this is a no-op and the hash fallback below uses the very
+# same list the database assigns from.
+if [ "${#SESSION_COLOR_PALETTE[@]}" -eq 0 ]; then
+  SESSION_COLOR_PALETTE=(58 18 52 22)
 fi
 
 # Fall back to hashing whenever the database could not answer -- library absent,
@@ -221,7 +217,7 @@ case "$SEG_BG" in
     [ -z "$HASH_HEX" ] && HASH_HEX=0
     HASH_HEX=${HASH_HEX:0:8}
     HASH_INT=$((16#$HASH_HEX))
-    SEG_BG=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
+    SEG_BG=${SESSION_COLOR_PALETTE[$((HASH_INT % ${#SESSION_COLOR_PALETTE[@]}))]}
     ;;
 esac
 
