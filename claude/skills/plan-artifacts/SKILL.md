@@ -1,13 +1,19 @@
 ---
 name: plan-artifacts
-description: Emit a plan as a PLAN.html architecture document plus a TDD-sequenced TODO.md in the repo root, git-excluded and opened in the browser. Use whenever writing an implementation plan, usually in plan mode, before any production code is written.
+description: Emit a plan as a PLAN.html architecture document plus a TDD-sequenced TODO.md in the repo root, git-excluded and opened in the browser, then execute it increment by increment behind draft PRs. Use whenever writing an implementation plan, usually in plan mode, before any production code is written.
 ---
 
 # Plan Artifacts
 
-You are the **Planner**. Design the architectural solution and emit the execution
-state machine. **Write no production code** — not a stub, not a scaffold. The two
-files below are the entire deliverable.
+Two roles, in order: **Planner** writes the artifacts and halts; **Developer**
+executes them one increment at a time. Never start the Developer phase before
+the user has approved the plan.
+
+# Planner
+
+Design the architectural solution and emit the execution state machine.
+**Write no production code** — not a stub, not a scaffold. The two files below
+are the entire deliverable.
 
 ## Procedure
 
@@ -24,11 +30,10 @@ files below are the entire deliverable.
    - **`PLAN.html`** — the architecture: the components touched, the data flow
      between them, and the boundaries crossed. A diagram that restates the file
      list is not a diagram; show what calls what and where state lands.
-   - **`TODO.md`** — the work as atomic TDD increments. Each increment is one
-     behaviour, and carries the full five-step checklist from the template:
-     write tests, implement code, atomic commit (tests + code together), update
-     the draft PR, then **halt for user review**. An increment that cannot be
-     expressed as a single failing test is still too large — split it.
+     It must also **explain how the work splits into increments, and why** —
+     that split is a judgement call the user reviews, so state the reasoning.
+   - **`TODO.md`** — the increments, each carrying the full six-step checklist
+     from the template.
 
 3. Exclude both locally — they are working artifacts, never committed:
 
@@ -47,14 +52,45 @@ files below are the entire deliverable.
    **simultaneously** — the architecture and the increment list must never
    disagree.
 
-## During execution
+## Sizing an increment
 
-Once the plan is approved and you are working through `TODO.md`:
+**An increment is a self-contained slice of work worth a pull request on its
+own.** Not one function and its tests — that is too small to be worth opening a
+PR for. A reviewer should be able to read it, judge it, and merge it by itself.
 
-- Tick each checkbox as it completes, and keep the progress overview at the top
-  of the file in step. The file is how the user knows where things stand.
-- **`MANUAL GATE: User Review` is a hard stop**, not a formality. Do not begin
-  the next increment until the user has reviewed and approved the current one.
+There is no formula; it depends on the work, so apply judgement and defend the
+split in `PLAN.html`. When in doubt, err toward **too large rather than too
+small** — a PR not worth reviewing is the wrong unit.
+
+TDD operates *inside* an increment, not across increments: write a test, add
+code, write a test, add code, until the increment's work is finished. Splitting
+the general case and the edge case into separate commits is wrong — both belong
+to the same increment.
+
+# Developer
+
+Execute the approved state machine **sequentially**. One increment at a time;
+do not begin the next until the current one's gate clears.
+
+1. Read `TODO.md` in the repository root and find the current increment.
+2. Execute it under strict TDD, looping steps 1↔2 until the slice is complete:
+   write a failing test, implement the minimum that passes it, repeat. Run only
+   the **relevant** test files while looping — the full suite is the commit
+   gate's job. Refactoring happens here, under green tests.
+3. Run `/code-review high` (or the level the user set while planning) and **fix
+   what it finds**. The step ends clean, not merely read.
+4. Commit tests and code **together in one commit**, then push. The pre-commit
+   hook runs the full suite and lint gates; if it fails, fixing it is part of
+   this step. **`--no-verify` is never allowed.** Done only when push succeeds.
+5. `gh pr create --draft --reviewer <the user>` on the branch's first push, then
+   `gh pr view --web` to open it in the browser — **every increment, not just
+   the first**. Watch for review comments and address them as they land.
+6. **Halt at the `MANUAL GATE`.** The work is blocked on the author's review.
+   Proceed only once the PR is approved, marked ready for review, or the user
+   explicitly says to move on.
+
+Tick each checkbox as it completes and keep the progress table at the top of
+`TODO.md` current — that table is how the user knows where things stand.
 
 ## Constraints
 
