@@ -140,6 +140,50 @@ malformed payloads; exit is zero with non-empty output; and the output is valid
 UTF-8 (the bar glyph is 3 bytes, and a byte-based width calculation once sliced
 it mid-sequence).
 
+### What the statusline renders
+
+A context-usage bar on top, then a metrics line:
+
+```
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+~/code/conf |  master | task     Opus | ctx:12% | 24.1k tok | 14:22:01 | cpu:3% mem:412M
+```
+
+- **The bar is a context gauge.** The filled run is the percentage of the
+  context window in use, ramped green → olive → orange → red by arithmetic over
+  the ANSI-256 colour cube, not by hardcoded buckets. The remainder stays visible
+  as a dim grey track so the scale is always on screen. The colour is a pure
+  function of the percentage, so it reads the same in every session — it is
+  deliberately **not** hashed. Red at 100% is the point here; the no-red rule
+  below applies only to the `PALETTE` array.
+- The glyph is `▔` U+2594 UPPER ONE EIGHTH BLOCK, drawn as **foreground**. A cell
+  cannot be split vertically, so a background-painted run of spaces is always a
+  full row tall; inking the glyph instead gives a one-eighth-height rule.
+- **`dir | branch | task` share one background colour**, hashed from cwd+branch,
+  so each checkout is visually distinct and a given checkout is always the same
+  colour. All three share the one colour so they read as a single block. The
+  foreground is chosen per background by **computed relative luminance** — black
+  on bright, white on dark — because the palette spans navies through bright
+  yellow and a fixed foreground is unreadable at one end. The `PALETTE` array
+  excludes every red so this block never looks like an error state.
+- **The metrics wrap when they do not fit.** Normally the left and right groups
+  share one line, padded so the line ends on the bar's exact column. When they
+  would overflow, the right group moves to its own line, right-aligned to the
+  same edge. The script is stateless and re-run per refresh, so there is no
+  hysteresis: it flips between 2 and 3 lines at the boundary column while the
+  terminal is resized. That is expected.
+
+`statusLine.refreshInterval` in `settings.json` is in **seconds**, not
+milliseconds (Claude Code multiplies it by 1000 internally, minimum 1), so
+`"refreshInterval": 1` is a one-second refresh.
+
+Ten further tests pin this rendering: the fit and overflow layouts, the
+right-alignment of the wrapped group, the pad clamp (`printf` reads a negative
+`%*s` width as a left-justify flag and silently emits nothing), the fill
+proportion, the colour ramp, the bar colour being identical across directories,
+the luminance-based foreground choice, the background closing before the metrics,
+and absent segments leaving no coloured gap.
+
 ### Why skills are linked one-by-one
 
 Claude Code's **plugins write into `~/.claude/skills` too** — the ruby-lsp plugin

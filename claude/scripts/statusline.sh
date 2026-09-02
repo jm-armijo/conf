@@ -13,7 +13,6 @@ YELLOW=$'\033[33m'
 PURPLE=$'\033[35m'
 BLUE=$'\033[34m'
 RED=$'\033[31m'
-GREEN=$'\033[32m'
 RESET=$'\033[0m'
 
 # Context window ceiling (matches autoCompactWindow in settings.json)
@@ -70,21 +69,23 @@ fi
 # under a UTF-8 locale), never by byte, so a truncated title stays valid UTF-8.
 TASK=$(echo "$input" | jq -r '.customTitle // empty' 2>/dev/null)
 TASK_MAX=30
-TASK_SEG=""
+TASK_TEXT=""
 if [ -n "$TASK" ]; then
   if [ "$(printf '%s' "$TASK" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -gt "$TASK_MAX" ]; then
     TASK=$(printf '%s' "$TASK" | LC_ALL=en_US.UTF-8 cut -c1-$((TASK_MAX - 1)))…
   fi
-  TASK_SEG=" | ${PURPLE}${TASK}${RESET}"
+  TASK_TEXT=" | ${TASK}"
 fi
 
 # Empty when not in a repo at all -> the segment is omitted entirely below.
-BRANCH_SEG=""
-[ -n "$BRANCH" ] && BRANCH_SEG=" | ${GREEN} ${BRANCH}${RESET}"
+BRANCH_TEXT=""
+[ -n "$BRANCH" ] && BRANCH_TEXT=" |  ${BRANCH}"
 
 # ------------------------------------------------------------ header bar ----
-# A full-width band whose colour is derived from cwd+branch, so each terminal
-# panel is visually distinct and a given checkout always gets the same colour.
+# A full-width context-usage gauge: the filled run is CTX_PCT of the bar width,
+# ramped green (empty) -> red (full). Deliberately NOT hashed -- the colour
+# means "how full is the context", so it must read identically in every session
+# at the same percentage.
 
 # Terminal width. This hook runs with NO controlling TTY: stdin is the JSON
 # payload, /dev/tty is unavailable, and bare `tput cols` therefore reports a
@@ -121,10 +122,14 @@ BAR_MARGIN=${STATUSLINE_BAR_MARGIN:-12}
 COLS=$((COLS - BAR_MARGIN))
 [ "$COLS" -lt 1 ] && COLS=1
 
-# Palette of ANSI-256 background codes. Reds are deliberately excluded so the
-# bar is never confusable with an error state: no 1, 9, 52, 88, and nothing in
-# the 124-196 red spectrum. What remains is blues, greens, cyans, purples,
-# oranges and browns that all read clearly under white text.
+# Palette of ANSI-256 background codes, used for the dir/branch/task block.
+# Reds are deliberately excluded so the block is never confusable with an error
+# state: no 1, 9, 52, 88, and nothing in the 124-196 red spectrum. What remains
+# is blues, greens, cyans, purples, oranges and browns.
+#
+# The red ban applies ONLY here. The progress bar below is a usage gauge where
+# red at 100% is the entire point, so it computes its colour arithmetically and
+# never indexes this array. Do not add reds here to "match" the bar.
 PALETTE=(
   17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33
   34 35 36 37 38 39 54 55 56 57 58 59 60 61 62 63 64
@@ -149,19 +154,68 @@ HASH_HEX=$(printf '%s' "$HASH_KEY" | shasum 2>/dev/null | cut -d' ' -f1)
 [ -z "$HASH_HEX" ] && HASH_HEX=0
 HASH_HEX=${HASH_HEX:0:8}
 HASH_INT=$((16#$HASH_HEX))
-BAR_COLOR=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
+SEG_BG=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
 
-# Half-height bar. A cell cannot be split vertically, so a background-painted
-# run of spaces is always a FULL row tall. Instead draw U+2580 UPPER HALF BLOCK
-# (▀) in the bar colour as FOREGROUND, leaving the cell background untouched:
-# the glyph inks only the top half of each cell. (Swap for ▄ to sit it on the
-# baseline instead of hanging from the top.)
+# Pick a foreground that is legible on SEG_BG. The palette spans dark navies
+# (17-21) through bright yellow (226); a fixed white would be unreadable on the
+# bright end and a fixed black on the dark end, so this is computed, not eyeballed
+# against the raw code number (which is a cube index, not a brightness).
+#
+# ANSI-256 layout: 16-231 is a 6x6x6 RGB cube, code = 16 + 36r + 6g + b with each
+# channel 0-5 mapping to {0,95,135,175,215,255}; 232-255 is a greyscale ramp at
+# 8 + 10*(code-232). Convert to RGB, take relative luminance (Rec.709 weights),
+# then choose black 16 above the midpoint and white 231 below it.
+SEG_FG=$(awk -v c="$SEG_BG" 'BEGIN {
+    split("0 95 135 175 215 255", lv, " ")
+    if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
+    else {
+      n = c - 16
+      r = lv[int(n / 36) + 1]; g = lv[int((n % 36) / 6) + 1]; b = lv[(n % 6) + 1]
+    }
+    print ((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5) ? 16 : 231
+  }')
+
+# Bar colour is a pure function of CTX_PCT -- identical in every session at the
+# same fill, which is what makes it readable as a gauge rather than an ID.
+# Interpolated across the same 6x6x6 cube: blue pinned at 0, red walked 0->5 and
+# green 5->0, so the ramp passes green -> olive -> orange -> red continuously
+# rather than snapping between hardcoded buckets.
+BAR_COLOR=$(awk -v p="$CTX_PCT" 'BEGIN {
+    if (p < 0) p = 0; if (p > 100) p = 100
+    r = int(p * 5 / 100 + 0.5)
+    g = int((100 - p) * 5 / 100 + 0.5)
+    print 16 + 36 * r + 6 * g
+  }')
+
+# Fill length = CTX_PCT of the bar width. int() truncates, so the bar only shows
+# a full row at a true 100% and an empty one below half a column of usage.
+BAR_FILL=$(awk -v p="$CTX_PCT" -v n="$COLS" 'BEGIN {
+    f = int(n * p / 100)
+    if (f < 0) f = 0; if (f > n) f = n
+    print f
+  }')
+BAR_REST=$((COLS - BAR_FILL))
+
+# One-eighth-height bar. A cell cannot be split vertically, so a background-
+# painted run of spaces is always a FULL row tall. Instead draw U+2594 UPPER ONE
+# EIGHTH BLOCK (▔) as FOREGROUND, leaving the cell background untouched: the
+# glyph inks only the top eighth of each cell, which is thinner than the U+2580
+# UPPER HALF BLOCK (▀) this replaced. Both are East-Asian-Width "Ambiguous", i.e.
+# single-column, and both are present in the installed Meslo faces. If U+2594
+# ever renders as tofu, ▀ is the drop-in fallback.
 #
 # Built by REPEAT COUNT, not by measuring length: awk's length() counts BYTES in
-# this locale and ▀ is 3 bytes, so a length-based loop truncated the final glyph
+# this locale and ▔ is 3 bytes, so a length-based loop truncated the final glyph
 # mid-sequence and produced invalid UTF-8.
-BAR_BODY=$(awk -v n="$COLS" 'BEGIN { for (i = 0; i < n; i++) printf "▀" }')
-HEADER="$(printf '\033[38;5;%sm%s\033[0m' "$BAR_COLOR" "$BAR_BODY")"
+BAR_GLYPH="▔"
+bar_run() {
+  awk -v n="$1" -v ch="$BAR_GLYPH" 'BEGIN { for (i = 0; i < n; i++) printf "%s", ch }'
+}
+# The unfilled remainder stays visible as a dim track (grey 238) rather than
+# going blank, so the bar's full extent -- and therefore the scale the fill is
+# read against -- is always on screen.
+HEADER="$(printf '\033[38;5;%sm%s\033[38;5;238m%s\033[0m' \
+  "$BAR_COLOR" "$(bar_run "$BAR_FILL")" "$(bar_run "$BAR_REST")")"
 
 TIME=$(date +%H:%M:%S)
 
@@ -174,9 +228,21 @@ MEM=$(awk -v mem="${mem_kb:-0}" 'BEGIN {
 }')
 
 # ----------------------------------------------------------- metrics line ----
-# Two groups: LEFT pinned to column 1, RIGHT flush against column $COLS — the
+# Two groups: LEFT pinned to column 1, RIGHT flush against column $COLS -- the
 # same width the bar was drawn at, so both lines terminate on the same column.
-LEFT="${YELLOW}${DIR}${RESET}${BRANCH_SEG}${TASK_SEG}"
+#
+# dir/branch/task share ONE background so they read as a single continuous block
+# rather than three tinted chips. The RESET goes at the very END of the run, not
+# after each segment: resetting between them would punch unpainted gaps through
+# the block at every separator. BRANCH_TEXT/TASK_TEXT are plain text (empty when
+# absent), so an omitted segment contributes no cells at all and cannot leave a
+# stray coloured gap where it would have been.
+#
+# The trailing RESET is load-bearing for more than looks: without it the
+# background bleeds through the pad, the whole RIGHT group, and on to the next
+# terminal line.
+SEG_SGR=$'\033'"[48;5;${SEG_BG}m"$'\033'"[38;5;${SEG_FG}m"
+LEFT="${SEG_SGR}${DIR}${BRANCH_TEXT}${TASK_TEXT}${RESET}"
 RIGHT="${CYAN}${MODEL}${RESET} | ${CTX_COL}ctx:${CTX_PCT}%${RESET} | ${CYAN}${TOK_K} tok${RESET} | ${PURPLE}${TIME}${RESET} | ${BLUE}cpu:${CPU} mem:${MEM}${RESET}"
 
 # Visible width = the string with ANSI SGR sequences stripped, counted in
@@ -190,15 +256,32 @@ vis_width() {
   printf '%s' "$1" | sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '
 }
 
-PAD=$((COLS - $(vis_width "$LEFT") - $(vis_width "$RIGHT")))
-# 0 is a legitimate exact fit and must NOT be rounded up to 1 — that would push
-# the right group one column past the bar's edge. Only a genuine overflow
-# (negative) is clamped, to a single separating space rather than a negative
-# width (which printf reads as left-justify, silently emitting nothing) or a
-# wrapped line.
-[ "$PAD" -lt 0 ] && PAD=1
+RIGHT_W=$(vis_width "$RIGHT")
+PAD=$((COLS - $(vis_width "$LEFT") - RIGHT_W))
 
-# Render Statusline. Segments go through %s, never %b: the colour variables hold
-# real ESC bytes already, and %b would additionally re-interpret backslashes
-# appearing inside a branch name or path.
-printf "%s\n%s%*s%s\n" "$HEADER" "$LEFT" "$PAD" "" "$RIGHT"
+# PAD going negative is the overflow signal: the two groups together are wider
+# than the bar. Rather than let the metrics run past the bar's edge, wrap RIGHT
+# onto its own line -- 2 total lines when it fits, 3 when it does not.
+#
+# The flip has no hysteresis and cannot have any: the script is stateless and
+# re-run from scratch on every refresh, so there is nowhere to remember the
+# previous layout. It will therefore toggle between 2 and 3 lines at the exact
+# boundary column while the terminal is being resized. That is accepted.
+if [ "$PAD" -lt 0 ]; then
+  # Wrapped RIGHT is RIGHT-ALIGNED: padded out to $COLS so it stays flush
+  # against the same edge the bar ends on. Clamped >= 0 because printf reads a
+  # NEGATIVE "%*s" width as a left-justify flag and silently emits nothing --
+  # which would leave the group unaligned instead of erroring. When RIGHT alone
+  # is wider than the bar there is no alignment to be had, so it starts at
+  # column 1 and is allowed to run over.
+  WRAP_PAD=$((COLS - RIGHT_W))
+  [ "$WRAP_PAD" -lt 0 ] && WRAP_PAD=0
+  # Segments go through %s, never %b: the colour variables hold real ESC bytes
+  # already, and %b would additionally re-interpret backslashes appearing inside
+  # a branch name or path.
+  printf "%s\n%s\n%*s%s\n" "$HEADER" "$LEFT" "$WRAP_PAD" "" "$RIGHT"
+else
+  # 0 is a legitimate exact fit and must NOT be rounded up to 1 -- that would
+  # push the right group one column past the bar's edge.
+  printf "%s\n%s%*s%s\n" "$HEADER" "$LEFT" "$PAD" "" "$RIGHT"
+fi

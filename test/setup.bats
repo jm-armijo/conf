@@ -511,3 +511,215 @@ claude_env() {
     env -i PATH=/usr/bin:/bin HOME="$HOME" "$script" 2>/dev/null |
     iconv -f UTF-8 -t UTF-8 >/dev/null
 }
+
+# --- statusline rendering ------------------------------------------------
+#
+# Shared helpers. Every invocation goes through `env -i PATH=/usr/bin:/bin` for
+# the same reason test 28 does: an inherited interactive PATH includes /sbin and
+# hides the entire class of "binary not on the hook PATH" failure.
+#
+# COLUMNS is set explicitly so the width does not depend on whatever terminal
+# bats happens to run under; the script prefers $COLUMNS over walking the
+# process ancestry for a TTY, which makes the layout deterministic here.
+
+statusline_run() { # <columns> <payload>
+  printf '%s' "$2" |
+    env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS="$1" \
+      "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" 2>/dev/null
+}
+
+# Visible width of one line: SGR sequences stripped, then counted in CHARACTERS.
+# `wc -m` and not awk's length(), which counts BYTES in this locale -- the block
+# and branch glyphs are 3 bytes each and would be billed as 3 columns.
+line_width() {
+  printf '%s' "$1" | sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '
+}
+
+# A transcript yielding an exact token total, so CTX_PCT is a known value
+# rather than whatever the live session happens to be using.
+make_transcript() { # <tokens> <path>
+  printf '{"isSidechain":false,"message":{"usage":{"input_tokens":%d,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}\n' \
+    "$1" >"$2"
+}
+
+@test "statusline renders two lines and aligns metrics to the bar when content fits" {
+  # 160 columns less the default BAR_MARGIN of 12 leaves a 148-column bar. The
+  # metrics line must terminate on exactly that column -- that alignment is the
+  # whole point of the PAD computation.
+  local out
+  out=$(statusline_run 160 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}')
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ]
+  [ "$(line_width "$(printf '%s\n' "$out" | sed -n 1p)")" -eq 148 ]
+  [ "$(line_width "$(printf '%s\n' "$out" | sed -n 2p)")" -eq 148 ]
+}
+
+@test "statusline wraps to three lines when the metrics overflow the width" {
+  # A long customTitle plus a narrow terminal drives PAD negative, which is the
+  # overflow signal. LEFT and RIGHT then get a line each.
+  local out
+  out=$(statusline_run 90 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"a-fairly-long-session-title-x"}')
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 3 ]
+}
+
+@test "statusline right-aligns the wrapped right-hand group to the bar's edge" {
+  # The wrapped RIGHT group is padded out to the bar width so it stays flush
+  # against the same right edge, rather than starting at column 1.
+  local out bar right
+  out=$(statusline_run 90 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"a-fairly-long-session-title-x"}')
+  bar=$(line_width "$(printf '%s\n' "$out" | sed -n 1p)")
+  right=$(line_width "$(printf '%s\n' "$out" | sed -n 3p)")
+  [ "$bar" -eq 78 ]
+  [ "$right" -eq "$bar" ]
+  # Padded on the LEFT, so the line must begin with spaces. A left-aligned
+  # render would start straight into the model name and fail here.
+  printf '%s\n' "$out" | sed -n 3p | sed $'s/\033\\[[0-9;]*m//g' | grep -q '^  *[^ ]'
+}
+
+@test "statusline never emits a negative pad when the right group alone overflows" {
+  # printf reads a NEGATIVE "%*s" width as a left-justify flag and silently
+  # emits nothing, so WRAP_PAD is clamped at 0. At 40 columns the bar is 28 and
+  # RIGHT alone is wider than that: the group starts at column 1 and overruns,
+  # which is correct, but the line must still be non-empty and unpadded.
+  local out third
+  out=$(statusline_run 40 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"a-fairly-long-session-title-x"}')
+  third=$(printf '%s\n' "$out" | sed -n 3p)
+  [ -n "$third" ]
+  printf '%s' "$third" | sed $'s/\033\\[[0-9;]*m//g' | grep -qv '^ '
+}
+
+@test "statusline progress bar fill tracks context percentage" {
+  # Fill length is CTX_PCT of the bar width. At 112 columns the bar is 100, so
+  # the filled run is numerically equal to the percentage -- 0 at empty, 100 at
+  # a full context window.
+  local t out fill
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+
+  for pair in "0 0" "20000 10" "100000 50" "200000 100"; do
+    set -- $pair
+    make_transcript "$1" "$t"
+    out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+    # Everything before the track colour (grey 238) is the filled run.
+    fill=$(printf '%s' "$out" | sed $'s/\033\\[38;5;238m.*//' |
+      sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
+    [ "$fill" -eq "$2" ]
+  done
+}
+
+@test "statusline progress bar ramps green at low usage and red at high usage" {
+  # The colour is arithmetic over the 6x6x6 cube, not a lookup: blue pinned at
+  # 0, red walked up and green down. 46 is pure green (r=0,g=5), 196 pure red
+  # (r=5,g=0). Anything in the 124-196 red band would be a palette entry, which
+  # is exactly what the bar must NOT be using.
+  local t out
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+
+  make_transcript 0 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+  [ "$(printf '%s' "$out" | sed -n $'s/^\033\\[38;5;\\([0-9]*\\)m.*/\\1/p')" -eq 46 ]
+
+  make_transcript 200000 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+  [ "$(printf '%s' "$out" | sed -n $'s/^\033\\[38;5;\\([0-9]*\\)m.*/\\1/p')" -eq 196 ]
+}
+
+@test "statusline progress bar colour is identical for different directories" {
+  # This is what proves the bar is no longer hashed on cwd+branch. The segment
+  # background below it still varies per directory; the bar must not.
+  local t a b
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 100000 "$t"
+
+  bar_colour() {
+    statusline_run 112 "$(printf '{"workspace":{"current_dir":"%s"},"transcript_path":"%s"}' "$1" "$t")" |
+      sed -n 1p | sed -n $'s/^\033\\[38;5;\\([0-9]*\\)m.*/\\1/p'
+  }
+  a=$(bar_colour /tmp)
+  b=$(bar_colour /usr)
+  [ -n "$a" ]
+  [ "$a" = "$b" ]
+
+  # Sanity: the two directories really do hash differently, so the assertion
+  # above is not passing merely because both inputs were identical.
+  seg_bg() {
+    statusline_run 112 "$(printf '{"workspace":{"current_dir":"%s"}}' "$1")" |
+      sed -n 2p | sed -n $'s/^\033\\[48;5;\\([0-9]*\\)m.*/\\1/p'
+  }
+  [ "$(seg_bg /tmp)" != "$(seg_bg /usr)" ]
+}
+
+@test "statusline picks a contrasting foreground for the segment background" {
+  # The palette spans dark navies (17-21) through bright yellow (226), so a
+  # fixed foreground is unreadable at one end. The choice is by computed
+  # relative luminance, not by a threshold on the raw code number (which is a
+  # cube index, not a brightness). Assert both outcomes actually occur and that
+  # each is the correct one for its background.
+  local seen_black=0 seen_white=0 d out bg fg
+  for d in /tmp /usr /etc /var /Users /bin /sbin /opt; do
+    out=$(statusline_run 160 "$(printf '{"workspace":{"current_dir":"%s"}}' "$d")" | sed -n 2p)
+    bg=$(printf '%s' "$out" | sed -n $'s/^\033\\[48;5;\\([0-9]*\\)m.*/\\1/p')
+    fg=$(printf '%s' "$out" | sed -n $'s/^\033\\[48;5;[0-9]*m\033\\[38;5;\\([0-9]*\\)m.*/\\1/p')
+    [ -n "$bg" ]
+    # Recompute the expected choice independently of the script.
+    expected=$(awk -v c="$bg" 'BEGIN {
+      split("0 95 135 175 215 255", lv, " ")
+      if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
+      else {
+        n = c - 16
+        r = lv[int(n / 36) + 1]; g = lv[int((n % 36) / 6) + 1]; b = lv[(n % 6) + 1]
+      }
+      print ((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5) ? 16 : 231
+    }')
+    [ "$fg" -eq "$expected" ]
+    [ "$fg" -eq 16 ] && seen_black=1
+    [ "$fg" -eq 231 ] && seen_white=1
+  done
+  # Both branches must be exercised, or the test proves nothing about contrast.
+  [ "$seen_black" -eq 1 ]
+  [ "$seen_white" -eq 1 ]
+}
+
+@test "statusline segment background is closed before the metrics that follow" {
+  # An unreset 48;5;N bleeds the block colour through the pad and the whole
+  # right-hand group. Asserting merely that no background is open at END of line
+  # is vacuous -- the right-hand group ends with its own RESET, which closes the
+  # bled background at the last possible moment. So assert on the CELLS: walk the
+  # line tracking whether a background is active, and collect every printable
+  # character painted with one. That set must be exactly the block's own text.
+  local out painted
+  out=$(statusline_run 160 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"demo"}')
+  painted=$(printf '%s\n' "$out" | sed -n 2p | awk '
+    {
+      bg = 0; s = $0; acc = ""
+      while (length(s) > 0) {
+        if (match(s, /^\033\[[0-9;]*m/)) {
+          code = substr(s, 3, RLENGTH - 3)
+          if (code ~ /^48;5;/) bg = 1
+          if (code == "0") bg = 0
+          s = substr(s, RLENGTH + 1)
+        } else {
+          if (bg) acc = acc substr(s, 1, 1)
+          s = substr(s, 2)
+        }
+      }
+      print acc
+    }')
+  # Exactly the dir + task block. A bled background would additionally paint the
+  # pad spaces and the entire model/ctx/tok/time/cpu group.
+  [ "$painted" = "/tmp | demo" ]
+}
+
+@test "statusline omits absent branch and task without a stray coloured gap" {
+  # /usr is not a git checkout and the payload carries no customTitle, so the
+  # block must end immediately after the directory. A separator rendered for an
+  # absent segment would leave painted cells past it.
+  local out stripped
+  out=$(statusline_run 160 '{"workspace":{"current_dir":"/usr"}}' | sed -n 2p)
+  # Between the opening SGR pair and the FIRST reset there must be exactly
+  # "/usr". Cut at the first reset rather than matching to end of line: sed is
+  # greedy and would otherwise run to the LAST reset, swallowing the whole
+  # right-hand group and turning this into a vacuous comparison.
+  stripped=$(printf '%s' "$out" |
+    sed $'s/\033\\[0m.*//' |
+    sed $'s/^\033\\[48;5;[0-9]*m\033\\[38;5;[0-9]*m//')
+  [ "$stripped" = "/usr" ]
+}
