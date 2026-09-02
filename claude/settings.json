@@ -1,0 +1,60 @@
+{
+  "env": {
+    "ENABLE_PROMPT_CACHING_1H": "1",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-3-5-haiku-20241022"
+  },
+  "model": "opus",
+  "deniedMcpServers": [
+    {
+      "serverName": "computer-use"
+    },
+    {
+      "serverName": "Claude_Preview"
+    }
+  ],
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "Analyze the current session history for new architectural decisions, resolved dependencies, or persistent logic patterns. Append necessary insights to ./CLAUDE.md, ~/.claude/CLAUDE.md, or relevant skill files. CRITICAL: Do NOT use file-reading tools to check existing file contents. Rely exclusively on the information already provided in your system prompt. Do not be greedy; only execute file writes when strictly necessary.",
+            "model": "haiku"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-inefficient-bash.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/scripts/statusline.sh",
+    "padding": 1
+  },
+  "enabledPlugins": {
+    "jdtls-lsp@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": true,
+    "lua-lsp@claude-plugins-official": true,
+    "ruby-lsp@claude-plugins-official": true
+  },
+  "viewMode": "focus",
+  "alwaysThinkingEnabled": false,
+  "autoCompactWindow": 200000,
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
+}

@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Set up a new machine from this repo. Symlinks zsh, git, ghostty and OBS
-# config into place (so edits autosave back to the repo) and imports Magnet
-# settings.
+# Set up a new machine from this repo. Symlinks zsh, git, ghostty, OBS and
+# Claude Code config into place (so edits autosave back to the repo) and imports
+# Magnet settings.
 #
 # Each step is independent and idempotent: a failing step is recorded and the
 # rest still run, and re-running the script is safe.
@@ -156,6 +156,45 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
+# Claude Code reads these files and rewrites them in place rather than through
+# the temp-then-rename dance OBS uses or the atomic plist swap cfprefsd does, so
+# strategy 1 (file symlink) holds: edits made in-app — including the settings
+# Claude Code itself writes when you change one from inside a session — land back
+# in the repo through the link.
+#
+# Deliberately per-file, NOT a symlink of ~/.claude itself: that directory is
+# mostly Claude Code's own runtime state — session transcripts, caches, plugin
+# installs, shell snapshots, history.jsonl — which is machine-local, large, and
+# in places private. Linking the directory would drag all of it into the repo.
+setup_claude() {
+  link "$REPO_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md" || return 1
+  link "$REPO_DIR/claude/settings.json" "$HOME/.claude/settings.json" || return 1
+  link "$REPO_DIR/claude/scripts/statusline.sh" "$HOME/.claude/scripts/statusline.sh" || return 1
+  link "$REPO_DIR/claude/hooks/block-inefficient-bash.sh" "$HOME/.claude/hooks/block-inefficient-bash.sh" || return 1
+}
+
+# Skills get one symlink per skill directory rather than a single symlink of
+# ~/.claude/skills, because that directory is *shared* — Claude Code's plugins
+# write their own state into it (the ruby-lsp plugin drops a Gemfile and lockfile
+# in skills/.ruby-lsp/). A directory symlink would point that plugin-written junk
+# straight at the repo and it would show up as untracked noise on every machine.
+#
+# Per-skill links keep the boundary exact in both directions: only the skills
+# tracked here are repo-backed, and anything else — a plugin's state, a skill
+# written on one machine and not yet committed — stays a real directory beside
+# them, invisible to git. The cost is that a newly tracked skill needs a line
+# here, which is the same explicit opt-in every other app in this script gets.
+#
+# Its own step, separate from setup_claude, so a missing or renamed skill fails
+# loudly on its own line without also taking settings.json and the hooks with it.
+setup_claude_skills() {
+  local skill status=0
+  for skill in bug-fixing clean-code ui-separation; do
+    link "$REPO_DIR/claude/skills/$skill" "$HOME/.claude/skills/$skill" || status=1
+  done
+  return "$status"
+}
+
 # Only run the setup when executed directly. Sourcing the script (the bats suite
 # does this) just loads the helpers above without touching the machine.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -168,6 +207,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run "ghostty" setup_ghostty
   run "magnet" setup_magnet
   run "obs" setup_obs
+  run "claude" setup_claude
+  run "claude-skills" setup_claude_skills
 
   echo
   if [[ ${#errors[@]} -eq 0 ]]; then
