@@ -10,6 +10,9 @@ input=$(cat)
 # ANSI Colour Codes
 CYAN=$'\033[36m'
 YELLOW=$'\033[33m'
+# GREEN is used ONLY for a clean-tree branch. Every PALETTE background is
+# filtered for contrast against both this and YELLOW -- see the PALETTE comment.
+GREEN=$'\033[32m'
 PURPLE=$'\033[35m'
 BLUE=$'\033[34m'
 RED=$'\033[31m'
@@ -62,30 +65,70 @@ BRANCH=$(git -C "$DIR_RAW" branch --show-current 2>/dev/null)
 if [ -z "$BRANCH" ]; then
   BRANCH=$(git -C "$DIR_RAW" rev-parse --short HEAD 2>/dev/null)
 fi
-# Session name ("customTitle"). Absent on an unnamed session, in which case the
-# segment AND its separator are dropped rather than rendering a placeholder.
+# Working-tree cleanliness, used to colour the branch segment. agnoster's rule:
+# DIRTY means any uncommitted change at all -- unstaged edits, staged edits, OR
+# untracked files. Unpushed commits do NOT count.
+#
+# `status --porcelain` prints one line per such change and nothing at all on a
+# clean tree, so non-empty output is exactly the dirty predicate. Untracked files
+# must be included, so the default --untracked-files=normal is what is wanted;
+# do NOT "optimise" this to -uno, which would silently change the semantics.
+#
+# stderr is redirected here as well as by the blanket exec: outside a repo this
+# prints "not a git repository", and a single stderr byte makes Claude Code
+# discard the entire statusline.
+#
+# Cost note: this runs on every refresh and refreshInterval is 1s. On a very
+# large working tree `status --porcelain` can take tens of ms; it is guarded by
+# the BRANCH check so it is skipped entirely outside a repo.
+DIRTY=""
+if [ -n "$BRANCH" ]; then
+  [ -n "$(git -C "$DIR_RAW" status --porcelain 2>/dev/null)" ] && DIRTY=1
+fi
+
+# Session name. The payload key is "session_name", NOT "customTitle".
+# customTitle is the shape used in the session TRANSCRIPT (a record of
+# type "custom-title"); the statusline payload builder emits it as
+# `...sessionName && {session_name: sessionName}`, resolving the user-set title
+# first and the AI-generated one as a fallback. Reading .customTitle here always
+# yielded empty, which is why the segment was invisible -- it was never rendered
+# at all rather than rendered in an unreadable colour.
+#
+# Absent on a session with neither title, in which case the segment AND its
+# separator are dropped rather than rendering a placeholder.
 # Capped at TASK_MAX chars so a long title cannot shove the right-hand group
 # past the render width; the cut is by CHARACTER (cut -c is multibyte-aware
 # under a UTF-8 locale), never by byte, so a truncated title stays valid UTF-8.
-TASK=$(echo "$input" | jq -r '.customTitle // empty' 2>/dev/null)
+TASK=$(echo "$input" | jq -r '.session_name // .customTitle // empty' 2>/dev/null)
 TASK_MAX=30
 TASK_TEXT=""
 if [ -n "$TASK" ]; then
   if [ "$(printf '%s' "$TASK" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -gt "$TASK_MAX" ]; then
     TASK=$(printf '%s' "$TASK" | LC_ALL=en_US.UTF-8 cut -c1-$((TASK_MAX - 1)))…
   fi
-  TASK_TEXT=" | ${TASK}"
+  # Carries its own foreground so the segment is yellow regardless of what the
+  # branch segment before it set. A bare 3x with NO reset: a reset would drop
+  # the shared background too and punch a gap through the block.
+  TASK_TEXT="${YELLOW} | ${TASK}"
 fi
 
-# Empty when not in a repo at all -> the segment is omitted entirely below.
+# Empty when not in a repo at all -> the segment is omitted entirely below,
+# separator included. GREEN on a clean tree, YELLOW when dirty. The colour is
+# baked in here rather than applied in LEFT so that an absent branch contributes
+# no SGR at all, and so it cannot leak onto the task segment that follows.
 BRANCH_TEXT=""
-[ -n "$BRANCH" ] && BRANCH_TEXT=" |  ${BRANCH}"
+if [ -n "$BRANCH" ]; then
+  BRANCH_FG=$GREEN
+  [ -n "$DIRTY" ] && BRANCH_FG=$YELLOW
+  BRANCH_TEXT="${BRANCH_FG} |  ${BRANCH}"
+fi
 
 # ------------------------------------------------------------ header bar ----
-# A full-width context-usage gauge: the filled run is CTX_PCT of the bar width,
-# ramped green (empty) -> red (full). Deliberately NOT hashed -- the colour
-# means "how full is the context", so it must read identically in every session
-# at the same percentage.
+# A full-width context-usage gauge. The filled run is CTX_PCT of the bar width;
+# its colour is a per-cell gradient keyed on POSITION, green at the left edge
+# through to red at the right, so growing context reveals warmer colours instead
+# of recolouring the whole bar. Deliberately NOT hashed -- the bar means "how
+# full is the context", so it must read identically in every session.
 
 # Terminal width. This hook runs with NO controlling TTY: stdin is the JSON
 # payload, /dev/tty is unavailable, and bare `tput cols` therefore reports a
@@ -123,20 +166,35 @@ COLS=$((COLS - BAR_MARGIN))
 [ "$COLS" -lt 1 ] && COLS=1
 
 # Palette of ANSI-256 background codes, used for the dir/branch/task block.
-# Reds are deliberately excluded so the block is never confusable with an error
-# state: no 1, 9, 52, 88, and nothing in the 124-196 red spectrum. What remains
-# is blues, greens, cyans, purples, oranges and browns.
 #
-# The red ban applies ONLY here. The progress bar below is a usage gauge where
-# red at 100% is the entire point, so it computes its colour arithmetically and
-# never indexes this array. Do not add reds here to "match" the bar.
+# TWO rules produced this list; both must hold for any code added here.
+#
+# 1. NO REDS. The block must never be confusable with an error state: no 1, 9,
+#    52, 88, and nothing in the 124-196 red spectrum. The red ban applies ONLY
+#    here -- the progress bar below is a usage gauge where red at 100% is the
+#    entire point, so it computes its colour arithmetically and never indexes
+#    this array. Do not add reds here to "match" the bar.
+#
+# 2. CONTRAST >= 3.0 AGAINST BOTH YELLOW AND GREEN. The segments painted on this
+#    background are now fixed yellow (dir, task) and yellow-or-green (branch),
+#    not a computed per-background foreground, so the background must be legible
+#    under BOTH. Each candidate 16-255 was mapped to RGB (6x6x6 cube:
+#    code = 16 + 36r + 6g + b, channels 0-5 -> {0,95,135,175,215,255}; 232-255 is
+#    the grey ramp) and scored with the WCAG relative-luminance contrast ratio
+#    against xterm yellow rgb(205,205,0) and xterm green rgb(0,205,0). A code
+#    survives only if the WORSE of the two ratios is >= 3.0 -- WCAG AA for large
+#    text, which is the right bar for a single row of terminal glyphs; 4.5 (AA
+#    body text) leaves only 6 codes, too few to distinguish checkouts.
+#    Pure black (16) and the grey ramp (232-255) pass the maths but are excluded
+#    by hand: they read as an unpainted block against a dark terminal.
+#
+# What survives is dark blues, purples/magentas, dark greens, teals and olive --
+# every one of them dark, which is what makes a bright foreground legible.
+# Regenerate rather than hand-edit if the foregrounds ever change.
 PALETTE=(
-  17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33
-  34 35 36 37 38 39 54 55 56 57 58 59 60 61 62 63 64
-  65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81
-  91 92 93 94 95 96 97 98 99 100 101 102 103 104 105
-  106 107 108 109 110 111 112 113 114 115 116 117 118
-  119 120 121 122 123 199 200 201 202 208 214 220 226
+  17 18 19 20 21 22 23 24
+  53 54 55 56 57 58
+  89 90 91 92
 )
 
 # Key the colour on the absolute path plus branch, so two worktrees of the same
@@ -155,37 +213,6 @@ HASH_HEX=$(printf '%s' "$HASH_KEY" | shasum 2>/dev/null | cut -d' ' -f1)
 HASH_HEX=${HASH_HEX:0:8}
 HASH_INT=$((16#$HASH_HEX))
 SEG_BG=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
-
-# Pick a foreground that is legible on SEG_BG. The palette spans dark navies
-# (17-21) through bright yellow (226); a fixed white would be unreadable on the
-# bright end and a fixed black on the dark end, so this is computed, not eyeballed
-# against the raw code number (which is a cube index, not a brightness).
-#
-# ANSI-256 layout: 16-231 is a 6x6x6 RGB cube, code = 16 + 36r + 6g + b with each
-# channel 0-5 mapping to {0,95,135,175,215,255}; 232-255 is a greyscale ramp at
-# 8 + 10*(code-232). Convert to RGB, take relative luminance (Rec.709 weights),
-# then choose black 16 above the midpoint and white 231 below it.
-SEG_FG=$(awk -v c="$SEG_BG" 'BEGIN {
-    split("0 95 135 175 215 255", lv, " ")
-    if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
-    else {
-      n = c - 16
-      r = lv[int(n / 36) + 1]; g = lv[int((n % 36) / 6) + 1]; b = lv[(n % 6) + 1]
-    }
-    print ((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5) ? 16 : 231
-  }')
-
-# Bar colour is a pure function of CTX_PCT -- identical in every session at the
-# same fill, which is what makes it readable as a gauge rather than an ID.
-# Interpolated across the same 6x6x6 cube: blue pinned at 0, red walked 0->5 and
-# green 5->0, so the ramp passes green -> olive -> orange -> red continuously
-# rather than snapping between hardcoded buckets.
-BAR_COLOR=$(awk -v p="$CTX_PCT" 'BEGIN {
-    if (p < 0) p = 0; if (p > 100) p = 100
-    r = int(p * 5 / 100 + 0.5)
-    g = int((100 - p) * 5 / 100 + 0.5)
-    print 16 + 36 * r + 6 * g
-  }')
 
 # Fill length = CTX_PCT of the bar width. int() truncates, so the bar only shows
 # a full row at a true 100% and an empty one below half a column of usage.
@@ -208,14 +235,56 @@ BAR_REST=$((COLS - BAR_FILL))
 # this locale and ▔ is 3 bytes, so a length-based loop truncated the final glyph
 # mid-sequence and produced invalid UTF-8.
 BAR_GLYPH="▔"
-bar_run() {
-  awk -v n="$1" -v ch="$BAR_GLYPH" 'BEGIN { for (i = 0; i < n; i++) printf "%s", ch }'
+
+# The filled run is a GRADIENT, not a solid fill: each cell's colour is a
+# function of its POSITION along the bar, never of CTX_PCT. Cell i of n is
+# coloured at fraction i/(n-1), so the leftmost cell is always green and the
+# rightmost cell of a full bar is always red regardless of how full the bar
+# actually is. Growing context therefore extends the fill rightward and REVEALS
+# progressively warmer colours, instead of recolouring the whole bar at once.
+#
+# The ramp is interpolated over the ANSI-256 6x6x6 cube -- code = 16 + 36r + 6g +
+# b, channels 0-5 mapping to {0,95,135,175,215,255} -- with blue pinned at 0, red
+# walked 0->5 and green 5->0. That passes green -> olive -> orange -> red
+# continuously rather than snapping between hardcoded buckets.
+#
+# The colour is a pure function of (position, width): two different sessions or
+# directories at the same width produce a byte-identical bar. It encodes usage,
+# not identity, so it must NOT be hashed the way the segment block below is.
+#
+# Built by REPEAT COUNT inside awk, never by measuring length: awk's length()
+# counts BYTES in this locale and ▔ is 3 of them, so a length-based loop sliced
+# the final glyph mid-sequence and emitted invalid UTF-8. Consecutive cells that
+# resolve to the same cube code share one SGR sequence -- with a 6-step ramp most
+# of the bar is runs, so this collapses hundreds of escapes down to a handful.
+#
+# NOTE for anything downstream: the bar now carries many more escape sequences
+# than a solid fill did. Its width must be measured with SGR stripped and counted
+# in CHARACTERS (vis_width below), never by the raw string's byte or char length.
+bar_gradient() { # <fill> <total>
+  awk -v fill="$1" -v n="$2" -v ch="$BAR_GLYPH" 'BEGIN {
+    prev = -1
+    for (i = 0; i < fill; i++) {
+      # Guard n==1: a one-cell bar has no span to interpolate over, so it takes
+      # the green end rather than dividing by zero.
+      f = (n > 1) ? i / (n - 1) : 0
+      r = int(f * 5 + 0.5)
+      g = int((1 - f) * 5 + 0.5)
+      code = 16 + 36 * r + 6 * g
+      if (code != prev) { printf "\033[38;5;%dm", code; prev = code }
+      printf "%s", ch
+    }
+  }'
 }
+
 # The unfilled remainder stays visible as a dim track (grey 238) rather than
 # going blank, so the bar's full extent -- and therefore the scale the fill is
 # read against -- is always on screen.
-HEADER="$(printf '\033[38;5;%sm%s\033[38;5;238m%s\033[0m' \
-  "$BAR_COLOR" "$(bar_run "$BAR_FILL")" "$(bar_run "$BAR_REST")")"
+bar_track() { # <count>
+  awk -v n="$1" -v ch="$BAR_GLYPH" 'BEGIN { for (i = 0; i < n; i++) printf "%s", ch }'
+}
+HEADER="$(printf '%s\033[38;5;238m%s\033[0m' \
+  "$(bar_gradient "$BAR_FILL" "$COLS")" "$(bar_track "$BAR_REST")")"
 
 TIME=$(date +%H:%M:%S)
 
@@ -232,17 +301,24 @@ MEM=$(awk -v mem="${mem_kb:-0}" 'BEGIN {
 # same width the bar was drawn at, so both lines terminate on the same column.
 #
 # dir/branch/task share ONE background so they read as a single continuous block
-# rather than three tinted chips. The RESET goes at the very END of the run, not
-# after each segment: resetting between them would punch unpainted gaps through
-# the block at every separator. BRANCH_TEXT/TASK_TEXT are plain text (empty when
-# absent), so an omitted segment contributes no cells at all and cannot leave a
-# stray coloured gap where it would have been.
+# rather than three tinted chips. Only the FOREGROUND is switched between them,
+# with a bare 38;5;N -- never a RESET, which would drop the background too and
+# punch unpainted gaps through the block at every separator. The single RESET
+# goes at the very END of the run. It is load-bearing for more than looks:
+# without it the background bleeds through the pad, the whole RIGHT group, and on
+# to the next terminal line.
 #
-# The trailing RESET is load-bearing for more than looks: without it the
-# background bleeds through the pad, the whole RIGHT group, and on to the next
-# terminal line.
-SEG_SGR=$'\033'"[48;5;${SEG_BG}m"$'\033'"[38;5;${SEG_FG}m"
-LEFT="${SEG_SGR}${DIR}${BRANCH_TEXT}${TASK_TEXT}${RESET}"
+# The foregrounds are FIXED, not computed from the background: every PALETTE
+# entry is filtered to clear a 3.0 contrast ratio against both of them (see the
+# PALETTE comment), which is what makes a fixed choice safe here.
+#   dir    -> yellow
+#   branch -> GREEN when the working tree is clean, YELLOW when it is dirty
+#   task   -> yellow
+# BRANCH_TEXT/TASK_TEXT carry their own leading SGR and are empty when the
+# segment is absent, so an omitted segment contributes no cells at all -- not
+# even a stray colour change -- and cannot leave a coloured gap behind.
+SEG_BG_SGR=$'\033'"[48;5;${SEG_BG}m"
+LEFT="${SEG_BG_SGR}${YELLOW}${DIR}${BRANCH_TEXT}${TASK_TEXT}${RESET}"
 RIGHT="${CYAN}${MODEL}${RESET} | ${CTX_COL}ctx:${CTX_PCT}%${RESET} | ${CYAN}${TOK_K} tok${RESET} | ${PURPLE}${TIME}${RESET} | ${BLUE}cpu:${CPU} mem:${MEM}${RESET}"
 
 # Visible width = the string with ANSI SGR sequences stripped, counted in

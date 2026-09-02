@@ -149,23 +149,51 @@ A context-usage bar on top, then a metrics line:
 ~/code/conf |  master | task     Opus | ctx:12% | 24.1k tok | 14:22:01 | cpu:3% mem:412M
 ```
 
-- **The bar is a context gauge.** The filled run is the percentage of the
-  context window in use, ramped green → olive → orange → red by arithmetic over
-  the ANSI-256 colour cube, not by hardcoded buckets. The remainder stays visible
-  as a dim grey track so the scale is always on screen. The colour is a pure
-  function of the percentage, so it reads the same in every session — it is
-  deliberately **not** hashed. Red at 100% is the point here; the no-red rule
-  below applies only to the `PALETTE` array.
+- **The bar is a context gauge with a positional gradient.** The filled run is
+  the percentage of the context window in use. Its colour is a function of each
+  cell's **position along the bar**, not of the percentage: cell `i` of `n` is
+  interpolated at `i/(n-1)` over the ANSI-256 colour cube, so the leftmost cell is
+  always green and the rightmost cell of a full bar is always red, whatever the
+  fill. Growing context therefore extends the bar rightward and *reveals*
+  progressively warmer colours, instead of recolouring the whole bar at once. The
+  remainder stays visible as a dim grey track so the scale is always on screen.
+  The colour is a pure function of (position, width), so two sessions at the same
+  width produce a byte-identical bar — it is deliberately **not** hashed. Red at
+  the right-hand end is the point here; the no-red rule below applies only to the
+  `PALETTE` array.
 - The glyph is `▔` U+2594 UPPER ONE EIGHTH BLOCK, drawn as **foreground**. A cell
   cannot be split vertically, so a background-painted run of spaces is always a
   full row tall; inking the glyph instead gives a one-eighth-height rule.
+  Consecutive cells resolving to the same cube code share one escape sequence, so
+  a 100-cell bar emits a handful of SGR sequences rather than a hundred. Anything
+  measuring the bar's width must strip SGR and count **characters** — never bytes,
+  and never the raw string length.
 - **`dir | branch | task` share one background colour**, hashed from cwd+branch,
   so each checkout is visually distinct and a given checkout is always the same
-  colour. All three share the one colour so they read as a single block. The
-  foreground is chosen per background by **computed relative luminance** — black
-  on bright, white on dark — because the palette spans navies through bright
-  yellow and a fixed foreground is unreadable at one end. The `PALETTE` array
-  excludes every red so this block never looks like an error state.
+  colour. All three share the one colour so they read as a single block; only the
+  *foreground* changes between them, with a bare `38;5;`/`3x` and never a reset,
+  which would drop the background too and punch a gap at every separator.
+- **Foregrounds are fixed, not computed.** Directory and task are **yellow**.
+  The branch is **green when the working tree is clean and yellow when it is
+  dirty**, where dirty is agnoster's rule — any uncommitted change at all:
+  unstaged edits, staged edits, *or* untracked files. Unpushed commits do not
+  count. That is exactly `git status --porcelain` being non-empty; do not
+  "optimise" it to `-uno`, which would stop counting untracked files. It runs once
+  per refresh (~12 ms on this repo, against a ~65 ms whole-script budget) and is
+  skipped entirely outside a repo.
+- **`PALETTE` is filtered by contrast, and the filter is the array's contract.**
+  Because the foregrounds above are fixed rather than computed per background, the
+  background has to be legible under **both** yellow and green. Every candidate
+  16–255 was mapped to RGB via the 6×6×6 cube and scored with the WCAG relative-
+  luminance contrast ratio against xterm yellow `rgb(205,205,0)` and xterm green
+  `rgb(0,205,0)`; a code survives only if the **worse** of the two ratios is
+  ≥ 3.0 (WCAG AA for large text — the right bar for a single row of terminal
+  glyphs; 4.5 leaves only 6 codes). Pure black and the grey ramp pass the maths
+  but are excluded by hand as they read as an unpainted block. The pre-existing
+  **no-red ban** is preserved on top of that, so the block never looks like an
+  error state. **18 codes survive** — dark blues, purples, magentas, dark greens,
+  teals and olive. Regenerate the array rather than hand-editing it if the
+  foregrounds ever change; two tests pin the threshold and the red ban.
 - **The metrics wrap when they do not fit.** Normally the left and right groups
   share one line, padded so the line ends on the bar's exact column. When they
   would overflow, the right group moves to its own line, right-aligned to the
@@ -173,16 +201,31 @@ A context-usage bar on top, then a metrics line:
   hysteresis: it flips between 2 and 3 lines at the boundary column while the
   terminal is resized. That is expected.
 
+**The session title comes from `session_name`, not `customTitle`.** `customTitle`
+is the shape used in the session *transcript* (a record of type `custom-title`);
+the statusline payload carries the same value under `session_name`, resolving the
+user-set title first and the AI-generated one as a fallback. Reading
+`.customTitle` from the payload always yielded empty, so the task segment
+rendered as nothing at all.
+
 `statusLine.refreshInterval` in `settings.json` is in **seconds**, not
 milliseconds (Claude Code multiplies it by 1000 internally, minimum 1), so
 `"refreshInterval": 1` is a one-second refresh.
 
-Ten further tests pin this rendering: the fit and overflow layouts, the
+Sixteen further tests pin this rendering: the fit and overflow layouts, the
 right-alignment of the wrapped group, the pad clamp (`printf` reads a negative
 `%*s` width as a left-justify flag and silently emits nothing), the fill
-proportion, the colour ramp, the bar colour being identical across directories,
-the luminance-based foreground choice, the background closing before the metrics,
-and absent segments leaving no coloured gap.
+proportion, the gradient's green and red endpoints, its monotonicity, its
+independence from the fill percentage, its exact per-cell formula, the bar being
+byte-identical across directories, the yellow directory and the task segment
+being present at all, the branch's green/yellow across a clean tree and all three
+kinds of dirt, the palette's contrast threshold, the palette's red ban, the
+background closing before the metrics, and absent segments leaving no coloured
+gap.
+
+**Changes to this script need a Claude Code restart.** `settings.json` is read
+once at startup, so an edited statusline does not take effect in a running
+session — which has already produced one phantom "it's broken" report.
 
 ### Why skills are linked one-by-one
 

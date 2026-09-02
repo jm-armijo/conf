@@ -605,41 +605,149 @@ make_transcript() { # <tokens> <path>
   done
 }
 
-@test "statusline progress bar ramps green at low usage and red at high usage" {
-  # The colour is arithmetic over the 6x6x6 cube, not a lookup: blue pinned at
-  # 0, red walked up and green down. 46 is pure green (r=0,g=5), 196 pure red
-  # (r=5,g=0). Anything in the 124-196 red band would be a palette entry, which
-  # is exactly what the bar must NOT be using.
-  local t out
-  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
-
-  make_transcript 0 "$t"
-  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
-  [ "$(printf '%s' "$out" | sed -n $'s/^\033\\[38;5;\\([0-9]*\\)m.*/\\1/p')" -eq 46 ]
-
-  make_transcript 200000 "$t"
-  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
-  [ "$(printf '%s' "$out" | sed -n $'s/^\033\\[38;5;\\([0-9]*\\)m.*/\\1/p')" -eq 196 ]
+# Every SGR foreground code appearing in the bar's FILLED run, in order. The
+# track colour 238 and everything from it onward is cut first, so only gradient
+# cells are returned. Codes repeat once per RUN, not once per cell, because
+# consecutive cells resolving to the same code share one escape sequence.
+#
+# grep -o and not a sed s///gp: sed's global substitute has to walk the glyph
+# bytes between matches, and the block glyph is 3 bytes, which trips multibyte
+# handling on this platform's sed/awk. grep -o only ever touches the ASCII
+# escape sequences.
+bar_codes() { # <line>
+  printf '%s' "$1" | sed $'s/\033\\[38;5;238m.*//' |
+    grep -o $'\033\\[38;5;[0-9]*m' | sed $'s/\033\\[38;5;//;s/m$//'
 }
 
-@test "statusline progress bar colour is identical for different directories" {
-  # This is what proves the bar is no longer hashed on cwd+branch. The segment
-  # background below it still varies per directory; the bar must not.
+# One code per CELL rather than per run: expand the run-length coalesced
+# escapes by counting the glyphs that follow each. Counted with `wc -m` under a
+# UTF-8 locale, never awk's length(), which counts BYTES here and would report 3
+# for every glyph.
+bar_cell_codes() { # <line>
+  local filled seg code n
+  filled=$(printf '%s' "$1" | sed $'s/\033\\[38;5;238m.*//')
+  # Split on the escape sequences, keeping the code with the run it introduces.
+  while IFS= read -r seg; do
+    [ -z "$seg" ] && continue
+    code=${seg%%:*}
+    n=$(printf '%s' "${seg#*:}" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
+    while [ "$n" -gt 0 ]; do
+      printf '%s\n' "$code"
+      n=$((n - 1))
+    done
+  # printf '%s\n' and not '%s': the final run carries no trailing newline of its
+  # own, and `read` discards an unterminated last line -- which silently dropped
+  # the red end of the gradient from the expansion.
+  done < <(printf '%s\n' "$filled" |
+    sed $'s/\033\\[38;5;\\([0-9]*\\)m/\\\n\\1:/g' | tail -n +2)
+}
+
+# The gradient cell colour, recomputed independently of the script: fraction
+# i/(n-1) over the 6x6x6 cube, blue pinned at 0, red up and green down.
+expect_cell() { # <i> <n>
+  awk -v i="$1" -v n="$2" 'BEGIN {
+    f = (n > 1) ? i / (n - 1) : 0
+    printf "%d", 16 + 36 * int(f * 5 + 0.5) + 6 * int((1 - f) * 5 + 0.5)
+  }'
+}
+
+@test "statusline progress bar gradient starts green and ends red" {
+  # THE defining property of the gradient: colour is a function of POSITION, so
+  # the leftmost cell is green and the rightmost cell of a FULL bar is red --
+  # 46 is pure green (r=0,g=5) and 196 pure red (r=5,g=0) on the 6x6x6 cube.
+  # A solid fill, which is what this replaced, would emit one code for the whole
+  # run and fail the second assertion.
+  local t out codes
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 200000 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+  codes=$(bar_codes "$out")
+  [ "$(printf '%s\n' "$codes" | sed -n 1p)" -eq 46 ]
+  [ "$(printf '%s\n' "$codes" | tail -n 1)" -eq 196 ]
+  # More than one colour, or it is still a solid fill wearing a gradient's name.
+  [ "$(printf '%s\n' "$codes" | wc -l | tr -d ' ')" -gt 2 ]
+}
+
+@test "statusline progress bar gradient is monotonic green-to-red" {
+  # Walking left to right the red channel must never decrease and the green
+  # channel must never increase. This is what makes it read as one continuous
+  # ramp rather than an arbitrary sequence of colours.
+  local t out code prev_r=-1 prev_g=6 r g
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 200000 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+  for code in $(bar_codes "$out"); do
+    # Invert code = 16 + 36r + 6g + b back to its cube channels.
+    r=$(( (code - 16) / 36 ))
+    g=$(( ((code - 16) % 36) / 6 ))
+    [ "$r" -ge "$prev_r" ]
+    [ "$g" -le "$prev_g" ]
+    prev_r=$r
+    prev_g=$g
+  done
+  # Both ends actually reached, or a one-colour bar would pass vacuously.
+  [ "$prev_r" -eq 5 ]
+  [ "$prev_g" -eq 0 ]
+}
+
+@test "statusline progress bar cell colour depends on position not on fill" {
+  # The consequence of keying on position: a given cell keeps its colour as the
+  # bar grows past it. Render at 50% and at 90% and compare the prefix -- the
+  # shorter bar's colour sequence must be a prefix of the longer one's. A
+  # percentage-keyed fill would recolour every cell and fail immediately.
+  local t half deep
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+
+  make_transcript 100000 "$t"
+  half=$(bar_codes "$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)")
+  make_transcript 180000 "$t"
+  deep=$(bar_codes "$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)")
+
+  [ -n "$half" ]
+  [ "$(printf '%s\n' "$half" | wc -l | tr -d ' ')" -lt "$(printf '%s\n' "$deep" | wc -l | tr -d ' ')" ]
+  # The 50% sequence is the leading run of the 90% one.
+  [ "$(printf '%s\n' "$deep" | head -n "$(printf '%s\n' "$half" | wc -l | tr -d ' ')")" = "$half" ]
+}
+
+@test "statusline progress bar cell colours match the position formula exactly" {
+  # Pins the interpolation itself, not just its endpoints: expand the run-length
+  # coalesced escapes back to one code per cell and compare every one against an
+  # independently computed i/(n-1) ramp. At 112 columns the bar is 100 cells and
+  # a full context fills all of them.
+  local t out n=0 cell expected
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 200000 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+
+  while IFS= read -r cell; do
+    expected=$(expect_cell "$n" 100)
+    [ "$cell" -eq "$expected" ]
+    n=$((n + 1))
+  done < <(bar_cell_codes "$out")
+  # Every cell accounted for; a truncated expansion would otherwise pass by
+  # simply checking fewer cells than exist.
+  [ "$n" -eq 100 ]
+}
+
+@test "statusline progress bar is byte-identical for different directories" {
+  # This is what proves the bar is not hashed on cwd+branch. The gradient is a
+  # pure function of (position, width), so at the same width and the same fill
+  # two different directories must produce the SAME sequence of colours -- and
+  # the segment background below it must still differ, or the comparison above
+  # would be passing merely because both inputs were identical.
   local t a b
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 100000 "$t"
 
-  bar_colour() {
+  bar_of() {
     statusline_run 112 "$(printf '{"workspace":{"current_dir":"%s"},"transcript_path":"%s"}' "$1" "$t")" |
-      sed -n 1p | sed -n $'s/^\033\\[38;5;\\([0-9]*\\)m.*/\\1/p'
+      sed -n 1p
   }
-  a=$(bar_colour /tmp)
-  b=$(bar_colour /usr)
+  a=$(bar_codes "$(bar_of /tmp)")
+  b=$(bar_codes "$(bar_of /usr)")
   [ -n "$a" ]
   [ "$a" = "$b" ]
 
-  # Sanity: the two directories really do hash differently, so the assertion
-  # above is not passing merely because both inputs were identical.
   seg_bg() {
     statusline_run 112 "$(printf '{"workspace":{"current_dir":"%s"}}' "$1")" |
       sed -n 2p | sed -n $'s/^\033\\[48;5;\\([0-9]*\\)m.*/\\1/p'
@@ -647,35 +755,122 @@ make_transcript() { # <tokens> <path>
   [ "$(seg_bg /tmp)" != "$(seg_bg /usr)" ]
 }
 
-@test "statusline picks a contrasting foreground for the segment background" {
-  # The palette spans dark navies (17-21) through bright yellow (226), so a
-  # fixed foreground is unreadable at one end. The choice is by computed
-  # relative luminance, not by a threshold on the raw code number (which is a
-  # cube index, not a brightness). Assert both outcomes actually occur and that
-  # each is the correct one for its background.
-  local seen_black=0 seen_white=0 d out bg fg
-  for d in /tmp /usr /etc /var /Users /bin /sbin /opt; do
-    out=$(statusline_run 160 "$(printf '{"workspace":{"current_dir":"%s"}}' "$d")" | sed -n 2p)
-    bg=$(printf '%s' "$out" | sed -n $'s/^\033\\[48;5;\\([0-9]*\\)m.*/\\1/p')
-    fg=$(printf '%s' "$out" | sed -n $'s/^\033\\[48;5;[0-9]*m\033\\[38;5;\\([0-9]*\\)m.*/\\1/p')
-    [ -n "$bg" ]
-    # Recompute the expected choice independently of the script.
-    expected=$(awk -v c="$bg" 'BEGIN {
+@test "statusline directory segment is yellow and the task segment is yellow and visible" {
+  # The task was previously read from .customTitle, which is the SESSION
+  # TRANSCRIPT's shape, not the statusline payload's -- the real key is
+  # session_name, so the segment rendered as nothing at all. Assert both that a
+  # title is present in the output and that it, and the directory before it, are
+  # painted SGR 33.
+  local out stripped
+  out=$(statusline_run 200 '{"workspace":{"current_dir":"/usr"},"session_name":"Refine the statusline"}' | sed -n 2p)
+  # Directory: the block opens with the hashed background then yellow.
+  printf '%s' "$out" | grep -q $'^\033\[48;5;[0-9]*m\033\[33m/usr'
+  # Task: the separator that introduces it re-asserts yellow, and the title text
+  # is actually on the line.
+  printf '%s' "$out" | grep -q $'\033\[33m | Refine the statusline'
+  stripped=$(printf '%s' "$out" | sed $'s/\033\\[[0-9;]*m//g')
+  case "$stripped" in *"Refine the statusline"*) ;; *) return 1 ;; esac
+}
+
+@test "statusline branch is green on a clean tree and yellow on every kind of dirt" {
+  # agnoster's rule: dirty is ANY uncommitted change -- unstaged, staged, or
+  # untracked. Unpushed commits do not count. Each case gets its own throwaway
+  # repo so one cannot mask another.
+  local repo out
+  branch_fg() { # <dir>
+    statusline_run 200 "$(printf '{"workspace":{"current_dir":"%s"}}' "$1")" |
+      sed -n 2p | sed $'s/\033/E/g' | sed -n 's/.*E\[\(3[0-9]\)m |.*/\1/p'
+  }
+  new_repo() { # <name>
+    repo="${BATS_TEST_TMPDIR}/$1"
+    mkdir -p "$repo"
+    git -C "$repo" init -q
+    echo tracked >"$repo/tracked.txt"
+    git -C "$repo" add tracked.txt
+    git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m init
+  }
+
+  # Clean: green.
+  new_repo clean
+  [ "$(branch_fg "$repo")" = "32" ]
+
+  # Unstaged edit to a tracked file: yellow.
+  new_repo unstaged
+  echo changed >"$repo/tracked.txt"
+  [ "$(branch_fg "$repo")" = "33" ]
+
+  # Staged-only edit, working tree matching the index: yellow.
+  new_repo staged
+  echo changed >"$repo/tracked.txt"
+  git -C "$repo" add tracked.txt
+  [ "$(branch_fg "$repo")" = "33" ]
+
+  # Untracked file ONLY, nothing tracked touched: yellow. This is the case a
+  # -uno "optimisation" of `status --porcelain` would silently report as clean.
+  new_repo untracked
+  echo new >"$repo/brand-new.txt"
+  [ "$(branch_fg "$repo")" = "33" ]
+
+  # An unpushed COMMIT is not dirt: still green. Without this the test would
+  # pass for a check that merely compared against a remote.
+  new_repo unpushed
+  echo more >>"$repo/tracked.txt"
+  git -C "$repo" add tracked.txt
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m second
+  [ "$(branch_fg "$repo")" = "32" ]
+}
+
+@test "every PALETTE background clears the contrast threshold against yellow and green" {
+  # The dir/branch/task foregrounds are now FIXED yellow and green rather than a
+  # foreground computed per background, so legibility has to come from the
+  # palette instead. Recompute the WCAG contrast ratio here, independently of the
+  # script, and require the WORSE of the two to clear 3.0 for every entry.
+  local script codes
+  script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
+  codes=$(sed -n '/^PALETTE=(/,/^)/p' "$script" | sed '1d;$d' | tr -s ' \n' ' ')
+  [ -n "$codes" ]
+  # A non-trivial palette, or "all entries pass" is close to vacuous.
+  [ "$(printf '%s' "$codes" | wc -w | tr -d ' ')" -ge 12 ]
+
+  printf '%s' "$codes" | awk '
+    function chan(v) { return (v <= 0.03928) ? v / 12.92 : ((v + 0.055) / 1.055) ^ 2.4 }
+    function lum(r, g, b) { return 0.2126 * chan(r/255) + 0.7152 * chan(g/255) + 0.0722 * chan(b/255) }
+    function ratio(a, b) { return (a > b) ? (a + 0.05) / (b + 0.05) : (b + 0.05) / (a + 0.05) }
+    BEGIN {
       split("0 95 135 175 215 255", lv, " ")
-      if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
-      else {
-        n = c - 16
-        r = lv[int(n / 36) + 1]; g = lv[int((n % 36) / 6) + 1]; b = lv[(n % 6) + 1]
+      ly = lum(205, 205, 0)   # xterm yellow, SGR 33
+      lg = lum(0, 205, 0)     # xterm green,  SGR 32
+      bad = 0
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        c = $i + 0
+        if (c >= 232) { r = g = b = 8 + (c - 232) * 10 }
+        else {
+          n = c - 16
+          r = lv[int(n/36)+1]; g = lv[int((n%36)/6)+1]; b = lv[(n%6)+1]
+        }
+        l = lum(r, g, b)
+        cy = ratio(ly, l); cgr = ratio(lg, l)
+        m = (cy < cgr) ? cy : cgr
+        if (m < 3.0) { printf "code %d fails: %.2f\n", c, m; bad = 1 }
       }
-      print ((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5) ? 16 : 231
-    }')
-    [ "$fg" -eq "$expected" ]
-    [ "$fg" -eq 16 ] && seen_black=1
-    [ "$fg" -eq 231 ] && seen_white=1
+    }
+    END { exit bad }'
+}
+
+@test "PALETTE contains no reds" {
+  # Preserved from before the contrast filter: the block must never be
+  # confusable with an error state. No 1, 9, 52, 88, or anything in 124-196.
+  local script code
+  script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
+  for code in $(sed -n '/^PALETTE=(/,/^)/p' "$script" | sed '1d;$d'); do
+    [ "$code" -ne 1 ]
+    [ "$code" -ne 9 ]
+    [ "$code" -ne 52 ]
+    [ "$code" -ne 88 ]
+    [ "$code" -lt 124 ] || [ "$code" -gt 196 ]
   done
-  # Both branches must be exercised, or the test proves nothing about contrast.
-  [ "$seen_black" -eq 1 ]
-  [ "$seen_white" -eq 1 ]
 }
 
 @test "statusline segment background is closed before the metrics that follow" {
@@ -720,6 +915,6 @@ make_transcript() { # <tokens> <path>
   # right-hand group and turning this into a vacuous comparison.
   stripped=$(printf '%s' "$out" |
     sed $'s/\033\\[0m.*//' |
-    sed $'s/^\033\\[48;5;[0-9]*m\033\\[38;5;[0-9]*m//')
+    sed $'s/^\033\\[48;5;[0-9]*m\033\\[3[0-9]m//')
   [ "$stripped" = "/usr" ]
 }
