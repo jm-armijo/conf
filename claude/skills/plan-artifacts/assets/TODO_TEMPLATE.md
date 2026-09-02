@@ -8,7 +8,9 @@
 
      TDD runs *inside* an increment as a loop: write a failing test, make it
      pass, write the next failing test, make it pass, until the increment's work
-     is done. One commit carries the whole cycle.
+     is done. One commit carries the whole cycle. The test always moves first —
+     when the work *changes* existing behaviour, that means editing the existing
+     test to assert the new behaviour before the implementation changes.
 
      Increments are strictly sequential. Do not start the next one until the
      current PR is approved, marked ready for review, or the user says to move on.
@@ -43,10 +45,16 @@
 **Delivers:** {{THE_SELF_CONTAINED_SLICE_IN_ONE_LINE}}
 **Branch:** `{{branch-name}}`
 
-- [ ] **1. Write tests.** Add `{{test/path:test name}}` asserting {{THE_OBSERVABLE_BEHAVIOUR}}.
+- [ ] **1. Write tests — *always before touching the code*.** Add
+      `{{test/path:test name}}` asserting {{THE_OBSERVABLE_BEHAVIOUR}}.
       Run `{{RELEVANT_TEST_COMMAND}}` — it **must fail** with {{THE_EXPECTED_FAILURE_MESSAGE}}.
       A test that passes before the implementation tests nothing; if it is green
       already, the assertion is wrong, not the code.
+      **Changing existing behaviour is the same rule:** edit the *test* to assert
+      the new behaviour first and watch it fail against the current code, then
+      change the code. Never edit the implementation first and adjust the tests
+      after — a test rewritten to match code you already wrote only restates what
+      the code does, and cannot show the change was the one intended.
 - [ ] **2. Implement code.** {{THE_EDIT_IN_ONE_SENTENCE}} in `{{path}}`.
       Run `{{RELEVANT_TEST_COMMAND}}` — passes. Refactor here, under green tests;
       it is part of this step, not a separate one.
@@ -80,7 +88,9 @@
 **Delivers:** {{THE_SELF_CONTAINED_SLICE_IN_ONE_LINE}}
 **Branch:** `{{branch-name}}` <!-- cut from the merged/approved result of Increment 1 -->
 
-- [ ] **1. Write tests.** Add `{{test/path:test name}}` asserting {{THE_OBSERVABLE_BEHAVIOUR}}.
+- [ ] **1. Write tests — *before touching the code*.** Add `{{test/path:test name}}`
+      asserting {{THE_OBSERVABLE_BEHAVIOUR}}; for a change to existing behaviour,
+      edit that behaviour's test first.
       Run `{{RELEVANT_TEST_COMMAND}}` — it **must fail** first.
 - [ ] **2. Implement code.** {{THE_EDIT_IN_ONE_SENTENCE}} in `{{path}}`.
       Run `{{RELEVANT_TEST_COMMAND}}` — passes; refactor under green.
@@ -106,7 +116,7 @@
 **Delivers:** {{THE_SELF_CONTAINED_SLICE_IN_ONE_LINE}}
 **Branch:** `{{branch-name}}`
 
-- [ ] **1. Write tests.** {{…}}
+- [ ] **1. Write tests — *before touching the code*.** {{…}}
 - [ ] **2. Implement code.** {{…}} (loop 1↔2 until the slice is done)
 - [ ] **3. Code review.** `/code-review high`, fix findings.
 - [ ] **4. Atomic commit (Tests + Code) and push.** {{…}}

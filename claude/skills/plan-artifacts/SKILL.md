@@ -77,6 +77,14 @@ do not begin the next until the current one's gate clears.
    write a failing test, implement the minimum that passes it, repeat. Run only
    the **relevant** test files while looping — the full suite is the commit
    gate's job. Refactoring happens here, under green tests.
+
+   **The test always moves first, for changes as well as additions.** When the
+   work modifies existing behaviour, edit that behaviour's *test* to assert the
+   new expectation and watch it fail against the current code, then change the
+   implementation. Do not change the code first and update the tests to match:
+   a test rewritten around code you already wrote only restates what that code
+   does and cannot show the change was the one intended. (For a *bug*, the
+   `bug-fixing` skill governs and says the same thing.)
 3. Run `/code-review high` (or the level the user set while planning) and **fix
    what it finds**. The step ends clean, not merely read.
 4. Commit tests and code **together in one commit**, then push. The pre-commit
