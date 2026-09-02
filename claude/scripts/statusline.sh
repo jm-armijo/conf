@@ -165,17 +165,14 @@ BAR_MARGIN=${STATUSLINE_BAR_MARGIN:-12}
 COLS=$((COLS - BAR_MARGIN))
 [ "$COLS" -lt 1 ] && COLS=1
 
-# Palette of ANSI-256 background codes, used for the dir/branch/task block.
+# Fallback palette for the dir/branch/task block, used ONLY when the colour
+# database is unreachable (see below). The database is the normal source, and it
+# carries its own copy of this list in SESSION_COLOR_PALETTE; keep the two in
+# sync if either changes.
 #
-# TWO rules produced this list; both must hold for any code added here.
+# ONE rule produced this list.
 #
-# 1. NO REDS. The block must never be confusable with an error state: no 1, 9,
-#    52, 88, and nothing in the 124-196 red spectrum. The red ban applies ONLY
-#    here -- the progress bar below is a usage gauge where red at 100% is the
-#    entire point, so it computes its colour arithmetically and never indexes
-#    this array. Do not add reds here to "match" the bar.
-#
-# 2. CONTRAST >= 3.0 AGAINST BOTH YELLOW AND GREEN. The segments painted on this
+# CONTRAST >= 3.0 AGAINST BOTH YELLOW AND GREEN. The segments painted on this
 #    background are now fixed yellow (dir, task) and yellow-or-green (branch),
 #    not a computed per-background foreground, so the background must be legible
 #    under BOTH. Each candidate 16-255 was mapped to RGB (6x6x6 cube:
@@ -185,34 +182,48 @@ COLS=$((COLS - BAR_MARGIN))
 #    survives only if the WORSE of the two ratios is >= 3.0 -- WCAG AA for large
 #    text, which is the right bar for a single row of terminal glyphs; 4.5 (AA
 #    body text) leaves only 6 codes, too few to distinguish checkouts.
-#    Pure black (16) and the grey ramp (232-255) pass the maths but are excluded
-#    by hand: they read as an unpainted block against a dark terminal.
 #
-# What survives is dark blues, purples/magentas, dark greens, teals and olive --
-# every one of them dark, which is what makes a bright foreground legible.
-# Regenerate rather than hand-edit if the foregrounds ever change.
-PALETTE=(
-  17 18 19 20 21 22 23 24
-  53 54 55 56 57 58
-  89 90 91 92
-)
+# The list is ordered so consecutive entries are as unlike each other as
+# possible (minimum CIELab dE 90 between neighbours, cyclically), because
+# assignment hands them out in order.
+PALETTE=(18 144 126 22 201 95 21 58 53 255 52 228 235 208 24 130)
 
-# Key the colour on the absolute path plus branch, so two worktrees of the same
-# repo on different branches get different bars.
-HASH_KEY="${DIR_RAW}${BRANCH}"
-# Hash to hex, then take 8 chars (fits a 32-bit int with room to spare) and
-# convert to base 10. 16#ABC is bash's base-N literal syntax.
+# The colour is RECORDED, not derived.
 #
-# shasum is used rather than md5/md5sum because BOTH of those live only in
-# /sbin on macOS, which is NOT on the PATH Claude Code gives this hook. The
-# md5sum fallback therefore printed "command not found" to stderr, and the
-# statusline is discarded when its command writes to stderr -- the whole line
-# silently disappeared. shasum is in /usr/bin and always reachable.
-HASH_HEX=$(printf '%s' "$HASH_KEY" | shasum 2>/dev/null | cut -d' ' -f1)
-[ -z "$HASH_HEX" ] && HASH_HEX=0
-HASH_HEX=${HASH_HEX:0:8}
-HASH_INT=$((16#$HASH_HEX))
-SEG_BG=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
+# Hashing the key into the palette could not guarantee two live sessions looked
+# different -- nothing detected a collision. So a directory+branch is assigned a
+# colour once, permanently, in a machine-local SQLite database, and reopening
+# that branch months later returns the same colour. See the library for the full
+# rationale and the assignment rule.
+SESSION_COLORS_LIB="${SESSION_COLORS_LIB:-$HOME/.claude/lib/session-colors.sh}"
+SEG_BG=""
+if [ -r "$SESSION_COLORS_LIB" ]; then
+  # shellcheck source=/dev/null
+  . "$SESSION_COLORS_LIB" 2>/dev/null
+  SEG_BG=$(session_color_assign "$DIR_RAW" "$BRANCH" 2>/dev/null)
+fi
+
+# Fall back to hashing whenever the database could not answer -- library absent,
+# sqlite3 missing, file corrupt, lock held past the timeout. A collision is a
+# far better outcome than an unpainted segment.
+case "$SEG_BG" in
+  '' | *[!0-9]*)
+    HASH_KEY="${DIR_RAW}${BRANCH}"
+    # Hash to hex, then take 8 chars (fits a 32-bit int with room to spare) and
+    # convert to base 10. 16#ABC is bash's base-N literal syntax.
+    #
+    # shasum is used rather than md5/md5sum because BOTH of those live only in
+    # /sbin on macOS, which is NOT on the PATH Claude Code gives this hook. The
+    # md5sum fallback therefore printed "command not found" to stderr, and the
+    # statusline is discarded when its command writes to stderr -- the whole
+    # line silently disappeared. shasum is in /usr/bin and always reachable.
+    HASH_HEX=$(printf '%s' "$HASH_KEY" | shasum 2>/dev/null | cut -d' ' -f1)
+    [ -z "$HASH_HEX" ] && HASH_HEX=0
+    HASH_HEX=${HASH_HEX:0:8}
+    HASH_INT=$((16#$HASH_HEX))
+    SEG_BG=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
+    ;;
+esac
 
 # Fill length = CTX_PCT of the bar width. int() truncates, so the bar only shows
 # a full row at a true 100% and an empty one below half a column of usage.

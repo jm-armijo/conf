@@ -166,10 +166,21 @@ setup_obs() {
 # mostly Claude Code's own runtime state — session transcripts, caches, plugin
 # installs, shell snapshots, history.jsonl — which is machine-local, large, and
 # in places private. Linking the directory would drag all of it into the repo.
+#
+# One file is renamed across the link: the repo calls it global-instructions.md,
+# Claude Code requires the name CLAUDE.md. Keeping the repo copy under a
+# different name stops it being read as THIS repo's project instructions — the
+# root CLAUDE.md is a different file with a different job.
+#
+# Not linked, and not tracked: ~/.claude/statusline-colors.db, the session
+# colour assignments. It is runtime state created on first use, machine-local by
+# design (a colour belongs to this laptop's checkouts, not to any project).
 setup_claude() {
-  link "$REPO_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md" || return 1
+  link "$REPO_DIR/claude/global-instructions.md" "$HOME/.claude/CLAUDE.md" || return 1
   link "$REPO_DIR/claude/settings.json" "$HOME/.claude/settings.json" || return 1
+  link "$REPO_DIR/claude/statusline.conf" "$HOME/.claude/statusline.conf" || return 1
   link "$REPO_DIR/claude/scripts/statusline.sh" "$HOME/.claude/scripts/statusline.sh" || return 1
+  link "$REPO_DIR/claude/lib/session-colors.sh" "$HOME/.claude/lib/session-colors.sh" || return 1
   link "$REPO_DIR/claude/hooks/block-inefficient-bash.sh" "$HOME/.claude/hooks/block-inefficient-bash.sh" || return 1
 }
 

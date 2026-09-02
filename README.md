@@ -19,7 +19,7 @@ The script:
 - Symlinks `starship/starship.toml` → `~/.config/starship.toml` — the prompt's own config, which *is* tracked in this repo. This step runs independently of the install above, so the config still lands on a machine where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
-- Symlinks the **Claude Code** global config into `~/.claude` — `CLAUDE.md`, `settings.json`, the statusline script and the bash hook — plus one symlink per tracked skill directory. See [Claude Code](#claude-code) for what is and isn't managed.
+- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory. See [Claude Code](#claude-code) for what is and isn't managed.
 
 The clone location isn't baked in anywhere — `zsh/zshrc` finds its sibling files by
 resolving its own `~/.zshrc` symlink — so any directory works.
@@ -98,16 +98,30 @@ one symlink per file, so the rest stays machine-local and out of git:
 
 | Tracked | Linked to |
 | --- | --- |
-| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` — global instructions applied to every project |
+| `claude/global-instructions.md` | `~/.claude/CLAUDE.md` — global instructions applied to every project |
 | `claude/settings.json` | `~/.claude/settings.json` — model, env flags, hooks, statusline, enabled plugins, UI prefs |
+| `claude/statusline.conf` | `~/.claude/statusline.conf` — tunables for the session-colour assignments |
 | `claude/scripts/statusline.sh` | `~/.claude/scripts/statusline.sh` |
+| `claude/lib/session-colors.sh` | `~/.claude/lib/session-colors.sh` — the colour database, also sourceable from your shell |
 | `claude/hooks/block-inefficient-bash.sh` | `~/.claude/hooks/block-inefficient-bash.sh` |
 | `claude/skills/<skill>/` | `~/.claude/skills/<skill>/` — one link per skill |
+
+**One file is renamed across the link.** Claude Code requires the name
+`CLAUDE.md`, but a file by that name in *this* repo would be read as this repo's
+own project instructions — which is a different file with a different job. So the
+tracked copy is `claude/global-instructions.md` and `link()` puts it at
+`~/.claude/CLAUDE.md`. A test pins the rename.
 
 `settings.json` refers to the hook and the statusline by their `~/.claude/...`
 paths, so those two links are what make it work — renaming a script here without
 editing `settings.json` leaves Claude Code silently invoking nothing. A test
 pins that pairing.
+
+**One file is deliberately neither tracked nor linked:**
+`~/.claude/statusline-colors.db`, the session colour assignments. It is runtime
+state the statusline creates on first use, and it is machine-local by design — a
+colour belongs to *this* laptop's set of checkouts, not to any project. Delete it
+to reset every assignment. See [Session colours](#session-colours-are-recorded-not-hashed).
 
 ### The statusline's one hard rule
 
@@ -158,9 +172,9 @@ A context-usage bar on top, then a metrics line:
   progressively warmer colours, instead of recolouring the whole bar at once. The
   remainder stays visible as a dim grey track so the scale is always on screen.
   The colour is a pure function of (position, width), so two sessions at the same
-  width produce a byte-identical bar — it is deliberately **not** hashed. Red at
-  the right-hand end is the point here; the no-red rule below applies only to the
-  `PALETTE` array.
+  width produce a byte-identical bar — it is deliberately **not** hashed, and it is
+  the one part of the line that has nothing to do with the per-session colour
+  below. Red at the right-hand end is the point here.
 - The glyph is `▔` U+2594 UPPER ONE EIGHTH BLOCK, drawn as **foreground**. A cell
   cannot be split vertically, so a background-painted run of spaces is always a
   full row tall; inking the glyph instead gives a one-eighth-height rule.
@@ -168,11 +182,13 @@ A context-usage bar on top, then a metrics line:
   a 100-cell bar emits a handful of SGR sequences rather than a hundred. Anything
   measuring the bar's width must strip SGR and count **characters** — never bytes,
   and never the raw string length.
-- **`dir | branch | task` share one background colour**, hashed from cwd+branch,
-  so each checkout is visually distinct and a given checkout is always the same
-  colour. All three share the one colour so they read as a single block; only the
-  *foreground* changes between them, with a bare `38;5;`/`3x` and never a reset,
-  which would drop the background too and punch a gap at every separator.
+- **`dir | branch | task` share one background colour**, looked up from a small
+  database keyed on cwd+branch, so each checkout is visually distinct and a given
+  checkout is always the same colour — see
+  [Session colours](#session-colours-are-recorded-not-hashed). All three share the
+  one colour so they read as a single block; only the *foreground* changes between
+  them, with a bare `38;5;`/`3x` and never a reset, which would drop the
+  background too and punch a gap at every separator.
 - **Foregrounds are fixed, not computed.** Directory and task are **yellow**.
   The branch is **green when the working tree is clean and yellow when it is
   dirty**, where dirty is agnoster's rule — any uncommitted change at all:
@@ -188,12 +204,27 @@ A context-usage bar on top, then a metrics line:
   luminance contrast ratio against xterm yellow `rgb(205,205,0)` and xterm green
   `rgb(0,205,0)`; a code survives only if the **worse** of the two ratios is
   ≥ 3.0 (WCAG AA for large text — the right bar for a single row of terminal
-  glyphs; 4.5 leaves only 6 codes). Pure black and the grey ramp pass the maths
-  but are excluded by hand as they read as an unpainted block. The pre-existing
-  **no-red ban** is preserved on top of that, so the block never looks like an
-  error state. **18 codes survive** — dark blues, purples, magentas, dark greens,
-  teals and olive. Regenerate the array rather than hand-editing it if the
-  foregrounds ever change; two tests pin the threshold and the red ban.
+  glyphs; 4.5 leaves only 6 codes, and *nothing* in the 256-colour space reaches
+  4.5 against both). The survivors were then reviewed by eye and cut to **16
+  codes** that are mutually distinguishable, not merely legible — the point of the
+  colour is to tell two open sessions apart at a glance, which similar shades
+  defeat even when both are readable.
+
+  **There is no ban on reds.** An earlier version excluded them so the block would
+  not read as an error state; that is superseded, because the block is always a
+  solid painted field behind text rather than a lone glyph, and distinctness earns
+  more than the resemblance costs. `52`, `126`, `130`, `201` and `208` are in the
+  list on purpose.
+
+  **The array's order is load-bearing.** Assignment walks the list in order, so
+  entries sitting next to each other are handed to sessions likely to be open at
+  the same time. The order is chosen to maximise the CIELab distance between
+  *adjacent* entries: minimum ΔE **90.0**, mean 116.0, versus 47.9 if the same 16
+  codes were simply sorted ascending (which would put `58` beside `95`). It is
+  **cyclic** — the 17th assignment wraps to the first entry, so the `130 → 18` pair
+  counts too (ΔE 130.8). Regenerate the array rather than hand-editing it; adding a
+  code without re-running the ordering breaks the guarantee silently. Tests pin
+  the ordering's minimum ΔE and record the per-code contrast ratios.
 - **The metrics wrap when they do not fit.** Normally the left and right groups
   share one line, padded so the line ends on the bar's exact column. When they
   would overflow, the right group moves to its own line, right-aligned to the
@@ -219,13 +250,100 @@ proportion, the gradient's green and red endpoints, its monotonicity, its
 independence from the fill percentage, its exact per-cell formula, the bar being
 byte-identical across directories, the yellow directory and the task segment
 being present at all, the branch's green/yellow across a clean tree and all three
-kinds of dirt, the palette's contrast threshold, the palette's red ban, the
-background closing before the metrics, and absent segments leaving no coloured
-gap.
+kinds of dirt, the palette's contrast ratios, the palette's adjacent-ΔE
+ordering, the background closing before the metrics, and absent segments leaving
+no coloured gap. A further fifteen cover the colour database itself — see
+[Session colours](#session-colours-are-recorded-not-hashed).
 
 **Changes to this script need a Claude Code restart.** `settings.json` is read
 once at startup, so an edited statusline does not take effect in a running
 session — which has already produced one phantom "it's broken" report.
+
+### Session colours are recorded, not hashed
+
+The `dir | branch | task` block is painted so you can tell one session from
+another **without reading the text**. That only works if the colour is stable and
+if two sessions on screen together look different — and hashing cwd+branch into
+the palette gave neither. Two live sessions could hash to the same code with
+nothing to detect it, and nothing could ever be done about it if they did.
+
+So the colour is not derived any more, it is **recorded**. A directory+branch is
+assigned a colour once and keeps it permanently, in a SQLite database at
+`~/.claude/statusline-colors.db`. Close the session, come back next month, check
+the branch out again — same colour.
+
+- **The key is directory + branch.** Switching branch changes the colour, which
+  is the intended behaviour: it is a different piece of work. Switching *back*
+  returns the original colour.
+- **Colours are not exclusive.** Past 16 keys they are reused. A new key takes the
+  **least-used** code, and among codes tied at the lowest count, the one earliest
+  in the palette. With every count at zero that walks the ordered list from the
+  top; after 16 assignments the counts are level again and it starts over. So all
+  16 are handed out before any repeats, and repeats stay evenly spread.
+- **An existing row is never reassigned.** Whatever else happens, a live session's
+  colour cannot change underneath it — that is the entire point of the feature,
+  and it is why the insert is `INSERT OR IGNORE`. Two sessions racing to claim the
+  same new key produce one row, and the loser reads the winner's value rather than
+  overwriting it with a freshly computed one.
+- **Old assignments are forgotten**, by default after 30 days from when the colour
+  was *first assigned* — there is no "last used" tracking, so a session left open
+  longer than the retention period loses its row and picks up a new colour on the
+  next render. Cleanup runs only when a new colour is being assigned, never on the
+  far more frequent read path.
+
+Both of those numbers live in `claude/statusline.conf`, which is symlinked to
+`~/.claude/statusline.conf` and so is live the moment you save it — no reinstall,
+no restart:
+
+```bash
+STATUSLINE_COLOR_RETENTION_DAYS=30   # 0 disables cleanup entirely
+STATUSLINE_COLOR_DB="$HOME/.claude/statusline-colors.db"
+```
+
+The file is sourced defensively and every setting has an inline default in the
+library, so an absent, unreadable or half-written config falls back rather than
+breaking the statusline. A non-numeric retention value falls back to 30 rather
+than being interpolated into a malformed `DELETE`.
+
+The logic lives in `claude/lib/session-colors.sh` rather than inside the
+statusline, so it can be tested on its own **and** used from your own shell:
+
+```bash
+. ~/.claude/lib/session-colors.sh
+session_color ~/code/conf master      # prints the assigned code, or nothing
+```
+
+`session_color` is **read-only** — it never assigns, so merely opening a terminal
+cannot claim a colour. `session_color_assign` is the one that creates an
+assignment, and only the statusline calls it.
+
+Inspect or reset the database directly:
+
+```bash
+sqlite3 ~/.claude/statusline-colors.db 'SELECT * FROM colors;'
+rm ~/.claude/statusline-colors.db*     # reset every assignment
+```
+
+Every failure degrades to the old behaviour rather than to a broken line: if
+`sqlite3` is missing, the directory is unwritable, or the database is corrupt,
+the statusline falls back to hashing cwd+branch into the same palette.
+
+**`PRAGMA busy_timeout=2000` is not optional.** SQLite allows one writer at a
+time and by default abandons a locked write *instantly*. That fails in two ways,
+and the quiet one is worse: measured across 24 parallel writers, dropping the
+pragma silently lost 11 of 24 rows with **zero** bytes of stderr — and it can
+instead print `database is locked`, which under the rule above discards the whole
+statusline. With the pragma, 24 of 24 rows and no stderr. Writes hold the lock
+for microseconds, so the two-second ceiling is never actually reached. The
+regression test asserts on **rows written**, not on stderr, precisely because a
+stderr-only assertion passes vacuously here. (`journal_mode=WAL` is set
+alongside it, but that one is a property of the file rather than the connection,
+so it only has to be set once.)
+
+Both pragmas print a result row, which would be captured by the caller's `$(...)`
+and read as a colour code — an early version painted every session in colour
+"2000". They cannot be silenced inline, so the library emits a marker row after
+them and `sed` drops everything up to it.
 
 ### Why skills are linked one-by-one
 
@@ -337,7 +455,7 @@ cp -R "$OBS"/. "obs/$RES"/         # .gitignore keeps only the portable subset
 - **prompt** — edit `starship/starship.toml` (sections, colours, prompt character, truncation). It's symlink-live like the rest, so edits apply on the next prompt; no reinstall. To revert to the old prompt, set `ZSH_THEME="agnoster"` in `zsh/zshrc` — `zsh/agnoster.zsh-theme` is still tracked and still installed, and the Starship init is guarded so it simply does nothing if the binary is absent.
 - **git** — edit `~/.gitconfig` or run `git config --global ...` as usual; the symlink means changes (aliases and everything else) land in `git/gitconfig` automatically. Commit when ready.
 - **ghostty** — edit `~/.config/ghostty/config` directly; the symlink means changes land in `ghostty/config` automatically. Commit when ready.
-- **Claude Code** — edit `~/.claude/CLAUDE.md`, the skills, or the scripts directly; the symlinks mean changes land in `claude/` automatically. A *new* skill needs a line in `setup_claude_skills` before it is tracked, and `settings.json` changed from inside a session is worth a quick `ls -l` (see [above](#one-caveat-on-settingsjson)). Commit when ready.
+- **Claude Code** — edit `~/.claude/CLAUDE.md` (tracked as `claude/global-instructions.md`), `~/.claude/statusline.conf`, the skills, or the scripts directly; the symlinks mean changes land in `claude/` automatically. A *new* skill needs a line in `setup_claude_skills` before it is tracked, and `settings.json` changed from inside a session is worth a quick `ls -l` (see [above](#one-caveat-on-settingsjson)). Commit when ready.
 
 ## Committing
 
