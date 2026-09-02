@@ -1,0 +1,155 @@
+<!doctype html>
+<!-- Baseline for PLAN.html. Replace every {{PLACEHOLDER}} and every block marked
+     EXAMPLE. Self-contained on purpose: opened from file://, so no CDN, no web
+     fonts, no external anything. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PLAN_NAME}}</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #fff; --ink: #1a1a18; --muted: #6b6862;
+    --line: #e2ddd4; --accent: #b8562f; --accent-soft: #fdf1ea;
+    --add: #2f7a4f; --add-soft: #eef7f1; --warn: #8a6d1f; --warn-soft: #fbf4e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151a; --panel: #1e1d23; --ink: #eceaf0; --muted: #a09da8;
+      --line: #33313b; --accent: #e8845c; --accent-soft: #2c211d;
+      --add: #6fc48f; --add-soft: #1b271f; --warn: #d6b45c; --warn-soft: #29241a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 36px; }
+  h1 { font-size: 27px; margin: 0 0 8px; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 0; }
+  h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 40px 0 14px; font-weight: 600;
+  }
+  section > p:first-of-type { margin-top: 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 18px 20px; margin-bottom: 12px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+  }
+  code { background: var(--accent-soft); color: var(--accent); padding: 1px 5px; border-radius: 4px; }
+  .flow { overflow-x: auto; margin: 0 0 12px; }
+  .flow svg { display: block; min-width: 640px; }
+  .flow text { font: 12px ui-sans-serif, -apple-system, sans-serif; fill: var(--ink); }
+  .flow text.label { fill: var(--muted); font-size: 11px; }
+  .flow rect { fill: var(--panel); stroke: var(--line); }
+  .flow rect.hot { stroke: var(--accent); }
+  .flow path { stroke: var(--muted); fill: none; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  td.mono { white-space: nowrap; }
+  .tag {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--add-soft); color: var(--add); font-weight: 600;
+  }
+  .tag.edit { background: var(--warn-soft); color: var(--warn); }
+  .tag.del  { background: var(--accent-soft); color: var(--accent); }
+  ol.risks { padding-left: 20px; } ol.risks li { margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>{{PLAN_NAME}}</h1>
+  <p class="sub">{{ONE_LINE_OUTCOME}}</p>
+</header>
+
+<section>
+  <h2>Problem</h2>
+  <p>{{WHAT_IS_BROKEN_OR_MISSING_AND_HOW_IT_SURFACES}}</p>
+</section>
+
+<section>
+  <h2>Approach</h2>
+  <p>{{THE_ARCHITECTURAL_DECISION_IN_TWO_SENTENCES}}</p>
+</section>
+
+<section>
+  <h2>Data flow</h2>
+  <!-- EXAMPLE: redraw for the actual components. Boxes are modules, arrows are
+       calls or writes, labels name what crosses the boundary. -->
+  <div class="flow">
+    <svg viewBox="0 0 640 150" role="img" aria-label="{{FLOW_DESCRIPTION}}">
+      <rect x="8"   y="46" width="150" height="52" rx="6"/>
+      <text x="83"  y="70" text-anchor="middle">{{COMPONENT_A}}</text>
+      <text x="83"  y="87" text-anchor="middle" class="label">{{ROLE_A}}</text>
+
+      <path d="M162 72 H236" marker-end="url(#a)"/>
+      <text x="199" y="62" text-anchor="middle" class="label">{{PAYLOAD}}</text>
+
+      <rect x="240" y="46" width="150" height="52" rx="6" class="hot"/>
+      <text x="315" y="70" text-anchor="middle">{{COMPONENT_B}}</text>
+      <text x="315" y="87" text-anchor="middle" class="label">{{ROLE_B}}</text>
+
+      <path d="M394 72 H468" marker-end="url(#a)"/>
+      <text x="431" y="62" text-anchor="middle" class="label">{{RESULT}}</text>
+
+      <rect x="472" y="46" width="150" height="52" rx="6"/>
+      <text x="547" y="70" text-anchor="middle">{{COMPONENT_C}}</text>
+      <text x="547" y="87" text-anchor="middle" class="label">{{ROLE_C}}</text>
+
+      <defs>
+        <marker id="a" viewBox="0 0 8 8" refX="7" refY="4"
+                markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="currentColor" stroke="none"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+  <p class="sub"><span class="mono">{{HIGHLIGHTED_BOX}}</span> — {{WHY_THIS_ONE_IS_THE_CHANGE}}</p>
+</section>
+
+<section>
+  <h2>Components</h2>
+  <!-- EXAMPLE rows. One per module, not one per file. -->
+  <div class="card">
+    <h3>{{COMPONENT_NAME}}</h3>
+    <p>{{RESPONSIBILITY_AND_WHAT_IT_MUST_NOT_KNOW_ABOUT}}</p>
+  </div>
+</section>
+
+<section>
+  <h2>Files</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <!-- EXAMPLE rows -->
+      <tr><td class="mono">{{path/to/file}}</td><td><span class="tag">new</span></td><td>{{REASON}}</td></tr>
+      <tr><td class="mono">{{path/to/file}}</td><td><span class="tag edit">edit</span></td><td>{{REASON}}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Risks &amp; open questions</h2>
+  <ol class="risks">
+    <li>{{RISK_AND_THE_MITIGATION_OR_THE_DECISION_NEEDED_FROM_THE_USER}}</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Verification</h2>
+  <p>Done means: <code>{{COMMAND_THAT_PROVES_IT}}</code> passes, and {{OBSERVABLE_BEHAVIOUR}}.</p>
+</section>
+
+</div>
+</body>
+</html>

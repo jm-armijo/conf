@@ -201,7 +201,7 @@ setup_claude() {
 # loudly on its own line without also taking settings.json and the hooks with it.
 setup_claude_skills() {
   local skill status=0
-  for skill in bug-fixing clean-code ui-separation; do
+  for skill in bug-fixing clean-code plan-artifacts ui-separation; do
     link "$REPO_DIR/claude/skills/$skill" "$HOME/.claude/skills/$skill" || status=1
   done
   return "$status"
