@@ -131,9 +131,16 @@ PALETTE=(
 # Key the colour on the absolute path plus branch, so two worktrees of the same
 # repo on different branches get different bars.
 HASH_KEY="${DIR_RAW}${BRANCH}"
-# md5 emits hex; take 8 chars (fits a 32-bit int with room to spare) and
+# Hash to hex, then take 8 chars (fits a 32-bit int with room to spare) and
 # convert to base 10. 16#ABC is bash's base-N literal syntax.
-HASH_HEX=$(printf '%s' "$HASH_KEY" | md5 2>/dev/null || printf '%s' "$HASH_KEY" | md5sum | cut -d' ' -f1)
+#
+# shasum is used rather than md5/md5sum because BOTH of those live only in
+# /sbin on macOS, which is NOT on the PATH Claude Code gives this hook. The
+# md5sum fallback therefore printed "command not found" to stderr, and the
+# statusline is discarded when its command writes to stderr -- the whole line
+# silently disappeared. shasum is in /usr/bin and always reachable.
+HASH_HEX=$(printf '%s' "$HASH_KEY" | shasum 2>/dev/null | cut -d' ' -f1)
+[ -z "$HASH_HEX" ] && HASH_HEX=0
 HASH_HEX=${HASH_HEX:0:8}
 HASH_INT=$((16#$HASH_HEX))
 BAR_COLOR=${PALETTE[$((HASH_INT % ${#PALETTE[@]}))]}
