@@ -438,11 +438,14 @@ The trade-off is that adding a skill to the repo means adding its name to the
 list in `setup_claude_skills`. That is deliberate: it is the same explicit
 opt-in every other app in `setup.sh` gets.
 
-`claude/skills/plan-artifacts` carries its own `templates/` directory
-(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`) rather than reading them from
-`~/.config/claude-templates`, so the skill works on a fresh machine with nothing
-else installed. That path is still honoured when it exists — it is the
-machine-local override.
+Skill directories follow Claude Code's own layout: `SKILL.md` at the root, with
+`scripts/` for executables, `references/` for docs loaded on demand, and
+`assets/` for templates and fonts. `clean-code` uses `references/` for its
+chapters; `plan-artifacts` uses `assets/` for the two baselines it fills in
+(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`). Those are tracked in the repo rather
+than read from `~/.config/claude-templates`, so the skill works on a fresh
+machine with nothing else installed — that path is still honoured when it
+exists, as the machine-local override.
 
 ### Adding a skill
 
