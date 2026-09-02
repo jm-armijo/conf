@@ -952,8 +952,22 @@ expect_cell_cube() { # <i> <n>
   # The foregrounds are FIXED yellow and green, so legibility has to come from
   # the palette. Seven of the current entries do not clear 3.0 against them:
   #
-  #   144 (1.05)  201 (1.45)  95 (2.54)  255 (1.47)
-  #   228 (1.61)  208 (1.12)  130 (2.18)
+  #   144 (1.18)  201 (1.64)  95 (2.87)  255 (1.61)
+  #   228 (1.77)  208 (1.26)  130 (2.46)
+  #
+  # THE RATIOS ABOVE WERE ONCE WRONG, AND SO WAS THE PALETTE THEY JUSTIFIED.
+  # Earlier revisions of this test scored against the XTERM DEFAULT yellow
+  # rgb(205,205,0) and green rgb(0,205,0). The statusline emits SGR 33 and 32,
+  # which resolve through the TERMINAL THEME, not through xterm's defaults --
+  # ghostty's "deep" theme renders them #d9bd26 and #1cd915. Scoring the wrong
+  # colours produced a wrong ranking, which is how a palette with seven
+  # illegible entries passed a contrast filter at selection time. The constants
+  # below are now the theme's real values.
+  #
+  # This makes the test THEME-SPECIFIC, which is the honest trade: the palette
+  # protects legibility in the terminal the user actually runs, and a different
+  # theme would need different constants. Anything reading SGR 33/32 as fixed
+  # RGB is making the same mistake this comment exists to prevent.
   #
   # They were chosen for distinctness from a rendered swatch page, where they
   # looked fine; in the statusline itself a light background under yellow text
@@ -977,8 +991,14 @@ expect_cell_cube() { # <i> <n>
     function ratio(a, b) { return (a > b) ? (a + 0.05) / (b + 0.05) : (b + 0.05) / (a + 0.05) }
     BEGIN {
       split("0 95 135 175 215 255", lv, " ")
-      ly = lum(205, 205, 0)   # xterm yellow, SGR 33
-      lg = lum(0, 205, 0)     # xterm green,  SGR 32
+      # SGR 33 and 32 as the ghostty "deep" theme actually renders them --
+      # NOT the xterm defaults. See the comment above this test.
+      # (No apostrophes in here: this awk program is single-quoted, and one
+      # would terminate the quote and silently truncate the rest of the file.
+      # bats then reports FEWER TESTS rather than an error -- it went from 66
+      # to 45 and still exited 0.)
+      ly = lum(217, 189, 38)  # #d9bd26, SGR 33
+      lg = lum(28, 217, 21)   # #1cd915, SGR 32
       bad = 0
     }
     {

@@ -29,3 +29,18 @@ pre-commit:
     # data, since a config move can break the paths setup.sh links.
     tests:
       run: bats test/
+
+    # A truncated .bats file does not fail -- it silently DEFINES FEWER TESTS
+    # and the suite still exits 0. Hit for real: an apostrophe inside a
+    # single-quoted awk program closed the quote and took the rest of the file
+    # with it, dropping the count from 66 to 45 with a green run. So assert a
+    # floor on the count as well as on the result. Raise it when tests are
+    # added; it only has to be tight enough to catch a file that stopped
+    # parsing partway through.
+    test-count:
+      run: |
+        n=$(bats test/ --count)
+        if [ "$n" -lt 66 ]; then
+          echo "bats sees only $n tests (expected >= 66) -- a .bats file probably stopped parsing partway through"
+          exit 1
+        fi
