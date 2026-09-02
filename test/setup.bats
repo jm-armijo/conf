@@ -270,7 +270,7 @@ claude_env() {
   echo "#!/bin/bash" >"$REPO_DIR/claude/hooks/block-inefficient-bash.sh"
 
   local skill
-  for skill in bug-fixing clean-code plan-artifacts ui-separation; do
+  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
     mkdir -p "$REPO_DIR/claude/skills/$skill"
     echo "# $skill" >"$REPO_DIR/claude/skills/$skill/SKILL.md"
   done
@@ -356,7 +356,7 @@ claude_env() {
   [ "$status" -eq 0 ]
 
   local skill
-  for skill in bug-fixing clean-code plan-artifacts ui-separation; do
+  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
     # Per-skill *directory* symlinks, so a skill's own references/ subtree comes
     # along without needing a line here for every file inside it.
     [ -L "$HOME/.claude/skills/$skill" ]
@@ -460,7 +460,7 @@ claude_env() {
   # claude/skills without that list being updated would only surface as a failing
   # step on the next machine setup.
   local skill
-  for skill in bug-fixing clean-code plan-artifacts ui-separation; do
+  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
     [ -f "${BATS_TEST_DIRNAME}/../claude/skills/$skill/SKILL.md" ]
   done
 }

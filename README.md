@@ -441,8 +441,9 @@ opt-in every other app in `setup.sh` gets.
 Skill directories follow Claude Code's own layout: `SKILL.md` at the root, with
 `scripts/` for executables, `references/` for docs loaded on demand, and
 `assets/` for templates and fonts. `clean-code` uses `references/` for its
-chapters; `plan-artifacts` uses `assets/` for the two baselines it fills in
-(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`). Those are tracked in the repo rather
+chapters; `plan-writing` uses `assets/` for the two baselines it fills in
+(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`); its sibling `plan-execution` runs the
+resulting `TODO.md` and needs no assets of its own. Those are tracked in the repo rather
 than read from `~/.config/claude-templates`, so the skill works on a fresh
 machine with nothing else installed — that path is still honoured when it
 exists, as the machine-local override.
