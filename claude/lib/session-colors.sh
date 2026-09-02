@@ -93,8 +93,17 @@ _sc_quote() {
 # DEFAULT gives up instantly on a locked database, printing "database is locked"
 # to stderr -- and Claude Code discards the ENTIRE statusline when its command
 # writes a single byte to stderr. Measured: 24 parallel writers produced 8 such
-# errors without this pragma and zero bytes of stderr with it. Writes hold the
-# lock for microseconds, so the 2s ceiling is never actually reached.
+# errors without this pragma and zero bytes of stderr with it.
+#
+# The ceiling is deliberately far larger than any real wait. A write holds the
+# lock for microseconds, so 24 contending writers should clear in single-digit
+# milliseconds; the value only matters when the machine stalls hard enough to
+# suspend a process mid-transaction, and there the difference between waiting
+# and failing is the whole statusline. Raised from 2000 after one test run in
+# a loaded suite lost rows at 2s -- unreproducible in 40 subsequent runs, 8 of
+# them under full CPU saturation, which is exactly the profile of a stall
+# rather than of contention. Nothing waits this long in practice; the number
+# is a backstop, not a budget.
 #
 # WAL lets readers proceed while a writer holds the lock, which is the common
 # case here: many sessions reading, one occasionally assigning. Unlike
@@ -122,7 +131,7 @@ _sc_sql() {
   mkdir -p "$(dirname "$STATUSLINE_COLOR_DB")" 2>/dev/null || return 1
   # WAL is set only on the schema statement, which is a no-op after first run.
   sqlite3 "$STATUSLINE_COLOR_DB" \
-    "PRAGMA busy_timeout=2000;
+    "PRAGMA busy_timeout=10000;
      PRAGMA journal_mode=WAL;
      SELECT '$_sc_mark';
      $_sc_schema

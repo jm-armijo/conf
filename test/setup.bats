@@ -542,9 +542,12 @@ claude_env() {
 # bats happens to run under; the script prefers $COLUMNS over walking the
 # process ancestry for a TTY, which makes the layout deterministic here.
 
-statusline_run() { # <columns> <payload>
+# env -i, so COLORTERM is UNSET unless a third argument supplies it. That is the
+# 256-colour fallback path; pass "truecolor" as $3 for the 24-bit path. Both are
+# real: the fallback is what a plain xterm gets, truecolor is what ghostty gets.
+statusline_run() { # <columns> <payload> [colorterm]
   printf '%s' "$2" |
-    env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS="$1" \
+    env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS="$1" ${3:+COLORTERM="$3"} \
       "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" 2>/dev/null
 }
 
@@ -634,9 +637,13 @@ make_transcript() { # <tokens> <path>
 # bytes between matches, and the block glyph is 3 bytes, which trips multibyte
 # handling on this platform's sed/awk. grep -o only ever touches the ASCII
 # escape sequences.
+# Handles BOTH output formats: "38;5;N" on the fallback path and "38;2;R;G;B" on
+# the truecolor one. A truecolor cell is returned as "R;G;B" so callers can split
+# it; a fallback cell as the bare cube code.
 bar_codes() { # <line>
   printf '%s' "$1" | sed $'s/\033\\[38;5;238m.*//' |
-    grep -o $'\033\\[38;5;[0-9]*m' | sed $'s/\033\\[38;5;//;s/m$//'
+    grep -o $'\033\\[38;[25];[0-9;]*m' |
+    sed $'s/\033\\[38;5;//;s/\033\\[38;2;//;s/m$//'
 }
 
 # One code per CELL rather than per run: expand the run-length coalesced
@@ -659,55 +666,144 @@ bar_cell_codes() { # <line>
   # own, and `read` discards an unterminated last line -- which silently dropped
   # the red end of the gradient from the expansion.
   done < <(printf '%s\n' "$filled" |
-    sed $'s/\033\\[38;5;\\([0-9]*\\)m/\\\n\\1:/g' | tail -n +2)
+    sed $'s/\033\\[38;5;\\([0-9]*\\)m/\\\n\\1:/g;s/\033\\[38;2;\\([0-9;]*\\)m/\\\n\\1:/g' |
+    tail -n +2)
 }
 
-# The gradient cell colour, recomputed independently of the script: fraction
-# i/(n-1) over the 6x6x6 cube, blue pinned at 0, red up and green down.
-expect_cell() { # <i> <n>
+# The gradient cell colour, recomputed independently of the script: the same
+# piecewise-linear waypoint ramp, restated here rather than imported so a change
+# to the script's stops has to be made deliberately in two places.
+expect_cell_rgb() { # <i> <n>
   awk -v i="$1" -v n="$2" 'BEGIN {
+    ns = split("0 0.20 0.35 0.55 0.70 0.85 1", sf, " ")
+    split("60 150 225 245 250 240 215", sr, " ")
+    split("200 205 210 175 130  75  35", sg, " ")
+    split("70   40  30  25  20  30  35", sb, " ")
     f = (n > 1) ? i / (n - 1) : 0
-    printf "%d", 16 + 36 * int(f * 5 + 0.5) + 6 * int((1 - f) * 5 + 0.5)
+    for (k = 1; k < ns && sf[k + 1] < f; k++) { }
+    span = sf[k + 1] - sf[k]
+    t = (span > 0) ? (f - sf[k]) / span : 0
+    printf "%d;%d;%d", int(sr[k] + (sr[k+1] - sr[k]) * t + 0.5),
+                       int(sg[k] + (sg[k+1] - sg[k]) * t + 0.5),
+                       int(sb[k] + (sb[k+1] - sb[k]) * t + 0.5)
+  }'
+}
+
+# The fallback ladder, restated for the same reason.
+expect_cell_cube() { # <i> <n>
+  awk -v i="$1" -v n="$2" 'BEGIN {
+    nc = split("40 76 112 148 184 220 214 208 202 196 160", cube, " ")
+    f = (n > 1) ? i / (n - 1) : 0
+    printf "%d", cube[int(f * (nc - 1) + 0.5) + 1]
   }'
 }
 
 @test "statusline progress bar gradient starts green and ends red" {
   # THE defining property of the gradient: colour is a function of POSITION, so
-  # the leftmost cell is green and the rightmost cell of a FULL bar is red --
-  # 46 is pure green (r=0,g=5) and 196 pure red (r=5,g=0) on the 6x6x6 cube.
-  # A solid fill, which is what this replaced, would emit one code for the whole
-  # run and fail the second assertion.
+  # the leftmost cell is green and the rightmost cell of a FULL bar is red. A
+  # solid fill, which is what this replaced, would emit one code for the whole
+  # run and fail the final assertion.
   local t out codes
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 200000 "$t"
+
+  # Truecolor: the exact endpoint RGBs of the waypoint ramp.
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
+  codes=$(bar_codes "$out")
+  [ "$(printf '%s\n' "$codes" | sed -n 1p)" = "60;200;70" ]
+  [ "$(printf '%s\n' "$codes" | tail -n 1)" = "215;35;35" ]
+
+  # Fallback: the ends of the cube ladder -- 40 is pure green, 160 dark red.
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
   codes=$(bar_codes "$out")
-  [ "$(printf '%s\n' "$codes" | sed -n 1p)" -eq 46 ]
-  [ "$(printf '%s\n' "$codes" | tail -n 1)" -eq 196 ]
-  # More than one colour, or it is still a solid fill wearing a gradient's name.
+  [ "$(printf '%s\n' "$codes" | sed -n 1p)" -eq 40 ]
+  [ "$(printf '%s\n' "$codes" | tail -n 1)" -eq 160 ]
   [ "$(printf '%s\n' "$codes" | wc -l | tr -d ' ')" -gt 2 ]
 }
 
 @test "statusline progress bar gradient is monotonic green-to-red" {
-  # Walking left to right the red channel must never decrease and the green
-  # channel must never increase. This is what makes it read as one continuous
-  # ramp rather than an arbitrary sequence of colours.
-  local t out code prev_r=-1 prev_g=6 r g
+  # Walking left to right, HUE must fall monotonically from green towards red.
+  # Hue rather than the raw channels because the ramp deliberately routes through
+  # yellow and orange: green rises before it falls, so a per-channel assertion
+  # would reject the very shape that keeps the midpoint from going muddy.
+  local t out prev=999 h
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 200000 "$t"
-  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
-  for code in $(bar_codes "$out"); do
-    # Invert code = 16 + 36r + 6g + b back to its cube channels.
-    r=$(( (code - 16) / 36 ))
-    g=$(( ((code - 16) % 36) / 6 ))
-    [ "$r" -ge "$prev_r" ]
-    [ "$g" -le "$prev_g" ]
-    prev_r=$r
-    prev_g=$g
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
+
+  for rgb in $(bar_codes "$out"); do
+    h=$(awk -F';' -v s="$rgb" 'BEGIN {
+      split(s, c, ";"); r = c[1]; g = c[2]; b = c[3]
+      mx = (r > g ? r : g); mx = (mx > b ? mx : b)
+      mn = (r < g ? r : g); mn = (mn < b ? mn : b)
+      if (mx == mn) { print 0; exit }
+      d = mx - mn
+      if (mx == r)      { hh = (g - b) / d; while (hh < 0) hh += 6 }
+      else if (mx == g) { hh = (b - r) / d + 2 }
+      else              { hh = (r - g) / d + 4 }
+      printf "%d", hh * 60
+    }')
+    # Integer hue, so allow equality; strictly it never rises.
+    [ "$h" -le "$prev" ]
+    prev=$h
   done
   # Both ends actually reached, or a one-colour bar would pass vacuously.
-  [ "$prev_r" -eq 5 ]
-  [ "$prev_g" -eq 0 ]
+  [ "$prev" -eq 0 ]
+  [ "$(bar_codes "$out" | sed -n 1p)" = "60;200;70" ]
+}
+
+@test "statusline progress bar reaches yellow by the first third" {
+  # The reason the ramp has waypoints at all. A straight green->red lerp sat at
+  # pure green until ~30% and only reached yellow near 50%, which read as "fine"
+  # far too long. Yellow is hue 50-70 and saturated; assert the bar is there by
+  # 35% of its width, and no longer green-dominant.
+  local t out cells cell h
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 200000 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
+
+  # Cell 35 of 100 is the 35% mark.
+  cell=$(bar_cell_codes "$out" | sed -n 36p)
+  h=$(awk -v s="$cell" 'BEGIN {
+    split(s, c, ";"); r = c[1]; g = c[2]; b = c[3]
+    mx = (r > g ? r : g); mx = (mx > b ? mx : b)
+    mn = (r < g ? r : g); mn = (mn < b ? mn : b)
+    d = mx - mn
+    if (mx == r)      { hh = (g - b) / d; while (hh < 0) hh += 6 }
+    else if (mx == g) { hh = (b - r) / d + 2 }
+    else              { hh = (r - g) / d + 4 }
+    printf "%d", hh * 60
+  }')
+  [ "$h" -ge 45 ]
+  [ "$h" -le 70 ]
+}
+
+@test "statusline progress bar gradient has no visible banding" {
+  # The other half of the complaint the waypoints fixed: the old cube ramp gave
+  # SIX distinct colours across the whole bar, one hard jump every ~17%. On the
+  # truecolor path every cell must differ from its neighbour by a small step --
+  # assert both that there are many distinct colours and that no single step is
+  # large enough to read as a band.
+  local t out n_distinct max_step
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 200000 "$t"
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
+
+  n_distinct=$(bar_cell_codes "$out" | sort -u | wc -l | tr -d ' ')
+  # A 100-cell bar; the old implementation managed 6.
+  [ "$n_distinct" -ge 60 ]
+
+  max_step=$(bar_cell_codes "$out" | awk -F';' '
+    NR > 1 {
+      d = ($1 > pr ? $1 - pr : pr - $1)
+      x = ($2 > pg ? $2 - pg : pg - $2); if (x > d) d = x
+      x = ($3 > pb ? $3 - pb : pb - $3); if (x > d) d = x
+      if (d > m) m = d
+    }
+    { pr = $1; pg = $2; pb = $3 }
+    END { print m + 0 }')
+  # 8/255 is roughly where a step starts being visible on a solid field.
+  [ "$max_step" -le 8 ]
 }
 
 @test "statusline progress bar cell colour depends on position not on fill" {
@@ -732,20 +828,30 @@ expect_cell() { # <i> <n>
 @test "statusline progress bar cell colours match the position formula exactly" {
   # Pins the interpolation itself, not just its endpoints: expand the run-length
   # coalesced escapes back to one code per cell and compare every one against an
-  # independently computed i/(n-1) ramp. At 112 columns the bar is 100 cells and
-  # a full context fills all of them.
-  local t out n=0 cell expected
+  # independently recomputed ramp. At 112 columns the bar is 100 cells and a full
+  # context fills all of them. Both paths, because they are different code.
+  local t out n cell expected
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 200000 "$t"
-  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
 
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
+  n=0
   while IFS= read -r cell; do
-    expected=$(expect_cell "$n" 100)
-    [ "$cell" -eq "$expected" ]
+    expected=$(expect_cell_rgb "$n" 100)
+    [ "$cell" = "$expected" ]
     n=$((n + 1))
   done < <(bar_cell_codes "$out")
   # Every cell accounted for; a truncated expansion would otherwise pass by
   # simply checking fewer cells than exist.
+  [ "$n" -eq 100 ]
+
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+  n=0
+  while IFS= read -r cell; do
+    expected=$(expect_cell_cube "$n" 100)
+    [ "$cell" -eq "$expected" ]
+    n=$((n + 1))
+  done < <(bar_cell_codes "$out")
   [ "$n" -eq 100 ]
 }
 

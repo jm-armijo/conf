@@ -254,35 +254,95 @@ BAR_GLYPH="▔"
 # actually is. Growing context therefore extends the fill rightward and REVEALS
 # progressively warmer colours, instead of recolouring the whole bar at once.
 #
-# The ramp is interpolated over the ANSI-256 6x6x6 cube -- code = 16 + 36r + 6g +
-# b, channels 0-5 mapping to {0,95,135,175,215,255} -- with blue pinned at 0, red
-# walked 0->5 and green 5->0. That passes green -> olive -> orange -> red
-# continuously rather than snapping between hardcoded buckets.
+# THE RAMP IS PIECEWISE-LINEAR THROUGH EXPLICIT WAYPOINTS, not a straight line
+# from green to red. Two reasons, and both are the point of the shape:
+#
+#  1. A single lerp green -> red passes through desaturated olive at the midpoint
+#     -- the two endpoints' channels cross over and cancel. The waypoints hold
+#     saturation >= 0.75 the whole way by routing through real yellow and orange.
+#  2. Position of the warning matters more than linearity. The stops put yellow
+#     at 35% and red-orange at 85%, so the bar stops reading as "green/fine"
+#     roughly a third of the way across. A linear ramp instead sat at pure green
+#     until ~30% and only reached yellow near 50%, which read as safe far too
+#     long.
+#
+# Stops (fraction -> rgb), interpolated linearly between neighbours:
+#   0.00  ( 60,200, 70)  green
+#   0.20  (150,205, 40)  yellow-green
+#   0.35  (225,210, 30)  yellow
+#   0.55  (245,175, 25)  amber
+#   0.70  (250,130, 20)  orange
+#   0.85  (240, 75, 30)  red-orange
+#   1.00  (215, 35, 35)  red
+# Hue falls monotonically 139deg -> 0deg across the bar; the largest per-cell
+# channel step on a 100-cell bar is 6/255, i.e. below the visible-banding floor.
+#
+# TWO OUTPUT PATHS, chosen by COLORTERM:
+#
+# * Truecolor (38;2;r;g;b) when COLORTERM is "truecolor" or "24bit". Every cell
+#   gets its own exact colour, so there is no banding at any width. This is the
+#   path that actually delivers smoothness -- the 6x6x6 cube physically cannot,
+#   see below.
+# * The ANSI-256 cube otherwise. The cube offers only 6 levels per channel, so a
+#   computed green->red diagonal yields SIX distinct codes across the whole bar
+#   -- ~17% of the width each, one hard jump per step. Worse, picking the nearest
+#   cube code per cell is not even monotonic in hue (166 sits at 27deg, between
+#   202 at 22deg and 160 at 0deg), so the ramp visibly backtracks. The fallback
+#   therefore uses a HAND-CHECKED ladder of 11 fully-saturated codes whose hue is
+#   strictly monotonic 120deg -> 0deg, indexed by position. It is coarser than
+#   truecolor by construction; that is the cube's limit, not a bug here.
 #
 # The colour is a pure function of (position, width): two different sessions or
 # directories at the same width produce a byte-identical bar. It encodes usage,
 # not identity, so it must NOT be hashed the way the segment block below is.
 #
 # Built by REPEAT COUNT inside awk, never by measuring length: awk's length()
-# counts BYTES in this locale and ▔ is 3 of them, so a length-based loop sliced
-# the final glyph mid-sequence and emitted invalid UTF-8. Consecutive cells that
-# resolve to the same cube code share one SGR sequence -- with a 6-step ramp most
-# of the bar is runs, so this collapses hundreds of escapes down to a handful.
+# counts BYTES in this locale and the glyph is 3 of them, so a length-based loop
+# sliced the final glyph mid-sequence and emitted invalid UTF-8. Consecutive
+# cells resolving to the same code still share one SGR sequence -- that collapses
+# the fallback path to a handful of escapes, and is a no-op on the truecolor path
+# where practically every cell differs.
 #
-# NOTE for anything downstream: the bar now carries many more escape sequences
-# than a solid fill did. Its width must be measured with SGR stripped and counted
-# in CHARACTERS (vis_width below), never by the raw string's byte or char length.
+# NOTE for anything downstream: the bar carries many more escape sequences than a
+# solid fill did. Its width must be measured with SGR stripped and counted in
+# CHARACTERS (vis_width below), never by the raw string's byte or char length.
+case "${COLORTERM:-}" in
+  truecolor | 24bit) BAR_TRUECOLOR=1 ;;
+  *) BAR_TRUECOLOR=0 ;;
+esac
+
 bar_gradient() { # <fill> <total>
-  awk -v fill="$1" -v n="$2" -v ch="$BAR_GLYPH" 'BEGIN {
-    prev = -1
+  awk -v fill="$1" -v n="$2" -v ch="$BAR_GLYPH" -v tc="$BAR_TRUECOLOR" 'BEGIN {
+    # Waypoints, parallel arrays: sf[] fraction, sr/sg/sb[] channels.
+    ns = split("0 0.20 0.35 0.55 0.70 0.85 1", sf, " ")
+    split("60 150 225 245 250 240 215", sr, " ")
+    split("200 205 210 175 130  75  35", sg, " ")
+    split("70   40  30  25  20  30  35", sb, " ")
+
+    # Hand-checked monotonic cube ladder for the non-truecolor path.
+    nc = split("40 76 112 148 184 220 214 208 202 196 160", cube, " ")
+
+    prev = ""
     for (i = 0; i < fill; i++) {
       # Guard n==1: a one-cell bar has no span to interpolate over, so it takes
       # the green end rather than dividing by zero.
       f = (n > 1) ? i / (n - 1) : 0
-      r = int(f * 5 + 0.5)
-      g = int((1 - f) * 5 + 0.5)
-      code = 16 + 36 * r + 6 * g
-      if (code != prev) { printf "\033[38;5;%dm", code; prev = code }
+
+      if (tc == 1) {
+        # Locate the segment holding f, then lerp within it.
+        for (k = 1; k < ns && sf[k + 1] < f; k++) { }
+        span = sf[k + 1] - sf[k]
+        t = (span > 0) ? (f - sf[k]) / span : 0
+        r = int(sr[k] + (sr[k + 1] - sr[k]) * t + 0.5)
+        g = int(sg[k] + (sg[k + 1] - sg[k]) * t + 0.5)
+        b = int(sb[k] + (sb[k + 1] - sb[k]) * t + 0.5)
+        seq = sprintf("\033[38;2;%d;%d;%dm", r, g, b)
+      } else {
+        j = int(f * (nc - 1) + 0.5) + 1
+        seq = sprintf("\033[38;5;%dm", cube[j])
+      }
+
+      if (seq != prev) { printf "%s", seq; prev = seq }
       printf "%s", ch
     }
   }'

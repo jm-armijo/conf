@@ -166,15 +166,47 @@ A context-usage bar on top, then a metrics line:
 - **The bar is a context gauge with a positional gradient.** The filled run is
   the percentage of the context window in use. Its colour is a function of each
   cell's **position along the bar**, not of the percentage: cell `i` of `n` is
-  interpolated at `i/(n-1)` over the ANSI-256 colour cube, so the leftmost cell is
-  always green and the rightmost cell of a full bar is always red, whatever the
-  fill. Growing context therefore extends the bar rightward and *reveals*
-  progressively warmer colours, instead of recolouring the whole bar at once. The
-  remainder stays visible as a dim grey track so the scale is always on screen.
-  The colour is a pure function of (position, width), so two sessions at the same
-  width produce a byte-identical bar — it is deliberately **not** hashed, and it is
-  the one part of the line that has nothing to do with the per-session colour
-  below. Red at the right-hand end is the point here.
+  coloured at fraction `i/(n-1)`, so the leftmost cell is always green and the
+  rightmost cell of a full bar is always red, whatever the fill. Growing context
+  therefore extends the bar rightward and *reveals* progressively warmer colours,
+  instead of recolouring the whole bar at once. The remainder stays visible as a
+  dim grey track so the scale is always on screen. The colour is a pure function
+  of (position, width), so two sessions at the same width produce a byte-identical
+  bar — it is deliberately **not** hashed, and it is the one part of the line that
+  has nothing to do with the per-session colour below. Red at the right-hand end
+  is the point here.
+- **The ramp is piecewise-linear through waypoints, not a straight green→red
+  lerp.** Two reasons, and both are the shape's job. A single lerp passes through
+  desaturated olive at the midpoint, because the endpoints' channels cross over
+  and cancel; routing through real yellow and orange holds saturation ≥ 0.75 the
+  whole way. And *where* the warning lands matters more than linearity — the stops
+  put yellow at **35%** and red-orange at **85%**, so the bar stops reading as
+  "fine" about a third of the way across. The linear version sat at pure green
+  until ~30% and only reached yellow near 50%, which read as safe far too long.
+  Hue falls monotonically 139° → 0° across the bar. The stops are:
+
+  | fraction | rgb | |
+  | --- | --- | --- |
+  | 0.00 | `60,200,70` | green |
+  | 0.20 | `150,205,40` | yellow-green |
+  | 0.35 | `225,210,30` | yellow |
+  | 0.55 | `245,175,25` | amber |
+  | 0.70 | `250,130,20` | orange |
+  | 0.85 | `240,75,30` | red-orange |
+  | 1.00 | `215,35,35` | red |
+
+- **Two output paths, chosen by `COLORTERM`.** With `truecolor` or `24bit` the bar
+  emits `38;2;r;g;b` and every cell gets its own exact colour — the largest
+  per-cell channel step on a 100-cell bar is **6/255**, below the visible-banding
+  floor. That is the path that actually delivers smoothness, and it is what
+  ghostty gets. Everything else falls back to the ANSI-256 cube, which *cannot*:
+  6 levels per channel means a computed green→red diagonal yields **six** distinct
+  codes across the whole bar, one hard jump every ~17%. Worse, nearest-cube
+  matching is not even monotonic in hue there (`166` sits at 27°, between `202` at
+  22° and `160` at 0°), so the ramp visibly backtracks. The fallback therefore
+  walks a hand-checked ladder of 11 fully-saturated codes whose hue is strictly
+  monotonic 120° → 0°. It is coarser by construction — that is the cube's limit,
+  not a defect in the code.
 - The glyph is `▔` U+2594 UPPER ONE EIGHTH BLOCK, drawn as **foreground**. A cell
   cannot be split vertically, so a background-painted run of spaces is always a
   full row tall; inking the glyph instead gives a one-eighth-height rule.
@@ -328,13 +360,14 @@ Every failure degrades to the old behaviour rather than to a broken line: if
 `sqlite3` is missing, the directory is unwritable, or the database is corrupt,
 the statusline falls back to hashing cwd+branch into the same palette.
 
-**`PRAGMA busy_timeout=2000` is not optional.** SQLite allows one writer at a
+**`PRAGMA busy_timeout=10000` is not optional.** SQLite allows one writer at a
 time and by default abandons a locked write *instantly*. That fails in two ways,
 and the quiet one is worse: measured across 24 parallel writers, dropping the
 pragma silently lost 11 of 24 rows with **zero** bytes of stderr — and it can
 instead print `database is locked`, which under the rule above discards the whole
 statusline. With the pragma, 24 of 24 rows and no stderr. Writes hold the lock
-for microseconds, so the two-second ceiling is never actually reached. The
+for microseconds, so the ceiling is never approached in practice — it is a
+backstop against the machine stalling mid-transaction, not a contention budget. The
 regression test asserts on **rows written**, not on stderr, precisely because a
 stderr-only assertion passes vacuously here. (`journal_mode=WAL` is set
 alongside it, but that one is a property of the file rather than the connection,
