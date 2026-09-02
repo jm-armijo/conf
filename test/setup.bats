@@ -264,6 +264,7 @@ claude_env() {
   echo "# global instructions" >"$REPO_DIR/claude/global-instructions.md"
   echo '{"model":"opus"}' >"$REPO_DIR/claude/settings.json"
   echo "STATUSLINE_COLOR_RETENTION_DAYS=30" >"$REPO_DIR/claude/statusline.conf"
+  echo "CTX_MAX=200000" >"$REPO_DIR/claude/context-window.conf"
   echo "#!/bin/bash" >"$REPO_DIR/claude/scripts/statusline.sh"
   echo "#!/bin/bash" >"$REPO_DIR/claude/lib/session-colors.sh"
   echo "#!/bin/bash" >"$REPO_DIR/claude/hooks/block-inefficient-bash.sh"
@@ -283,8 +284,9 @@ claude_env() {
 
   # These land at the same relative path on both sides.
   local f
-  for f in settings.json statusline.conf scripts/statusline.sh \
-    lib/session-colors.sh hooks/block-inefficient-bash.sh; do
+  for f in settings.json statusline.conf context-window.conf \
+    scripts/statusline.sh lib/session-colors.sh \
+    hooks/block-inefficient-bash.sh; do
     [ -L "$HOME/.claude/$f" ]
     [ "$(readlink "$HOME/.claude/$f")" = "$REPO_DIR/claude/$f" ]
   done
@@ -562,9 +564,16 @@ statusline_run() { # <columns> <payload> [colorterm]
   # STATUSLINE_CONF must be pointed away too: the tracked conf assigns
   # STATUSLINE_COLOR_DB unconditionally, so sourcing it would overwrite the
   # redirect below and put the writes back into the live database.
+  # CLAUDE_CONTEXT_CONF is redirected for the same isolation reason: unset, the
+  # script would read the developer's live ~/.claude/context-window.conf and the
+  # expected percentages would depend on whatever CTX_MAX that machine happens
+  # to carry. Defaulting it to a nonexistent path also means every existing
+  # statusline test exercises the INLINE fallbacks, which is the state a fresh
+  # machine is in. A test that wants a real conf sets it before calling.
   printf '%s' "$2" |
     env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS="$1" ${3:+COLORTERM="$3"} \
       STATUSLINE_CONF=/nonexistent \
+      CLAUDE_CONTEXT_CONF="${CLAUDE_CONTEXT_CONF:-/nonexistent}" \
       STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}/statusline-run.db" \
       "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" 2>/dev/null
 }
@@ -577,10 +586,25 @@ line_width() {
 }
 
 # A transcript yielding an exact token total, so CTX_PCT is a known value
-# rather than whatever the live session happens to be using.
+# rather than whatever the live session happens to be using. This is the
+# FALLBACK source -- see context_window_payload for the primary one.
 make_transcript() { # <tokens> <path>
   printf '{"isSidechain":false,"message":{"usage":{"input_tokens":%d,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}\n' \
     "$1" >"$2"
+}
+
+# A payload carrying the context_window object Claude Code has emitted since
+# v2.1.251 -- the PRIMARY source for both the token count and the window size.
+# total_input_tokens is input + cache_creation + cache_read and EXCLUDES output,
+# which is the same basis the compaction check itself uses.
+#
+# used_percentage is present in the real payload and is deliberately NOT read by
+# the script: it divides by the RAW window, so it reads ~83.5 at the moment
+# compaction fires. A wrong value is seeded here on purpose, so a regression
+# that starts trusting the field is caught rather than merely unproven.
+context_window_payload() { # <total_input_tokens> <context_window_size>
+  printf '{"workspace":{"current_dir":"/tmp"},"context_window":{"total_input_tokens":%d,"context_window_size":%d,"used_percentage":99}}' \
+    "$1" "$2"
 }
 
 @test "statusline renders two lines and aligns metrics to the bar when content fits" {
@@ -631,11 +655,17 @@ make_transcript() { # <tokens> <path>
 @test "statusline progress bar fill tracks context percentage" {
   # Fill length is CTX_PCT of the bar width. At 112 columns the bar is 100, so
   # the filled run is numerically equal to the percentage -- 0 at empty, 100 at
-  # a full context window.
+  # the AUTO-COMPACT POINT.
+  #
+  # 100% is 167000, not 200000: the scale's denominator is the USABLE window,
+  # CTX_MAX minus the CTX_RESERVE that auto-compaction holds back for output
+  # (200000 - 33000). A bar that divided by the raw 200000 read ~84% at the
+  # instant compaction fired, showing ~14 cells of headroom that did not exist.
+  # 83500 is exactly half the usable window and must therefore read 50.
   local t out fill
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
 
-  for pair in "0 0" "20000 10" "100000 50" "200000 100"; do
+  for pair in "0 0" "16700 10" "83500 50" "167000 100"; do
     set -- $pair
     make_transcript "$1" "$t"
     out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
@@ -644,6 +674,140 @@ make_transcript() { # <tokens> <path>
       sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
     [ "$fill" -eq "$2" ]
   done
+}
+
+# The `ctx:N%` reading off the metrics line, which is the number the bar fill is
+# derived from. Read from the rendered output rather than by sourcing anything,
+# so it pins what the user actually sees.
+ctx_pct() { # <payload> [columns]
+  statusline_run "${2:-200}" "$1" |
+    sed $'s/\033\\[[0-9;]*m//g' |
+    sed -n $'s/.*ctx:\\([0-9]*\\)%.*/\\1/p'
+}
+
+@test "statusline context percentage is scaled to the auto-compact point" {
+  # The core of the rescale, asserted on the printed number rather than on the
+  # bar so a fill-rounding change cannot mask it.
+  #
+  # Claude Code auto-compacts when the INPUT token count reaches
+  # window - reserve, and the reserve is an ABSOLUTE output budget (~33000),
+  # not a fraction of the window. So the gauge must hit 100 at 167000 on a
+  # 200000 window, and read half at 83500.
+  local t
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+
+  make_transcript 167000 "$t"
+  [ "$(ctx_pct "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")")" -eq 100 ]
+
+  make_transcript 83500 "$t"
+  [ "$(ctx_pct "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")")" -eq 50 ]
+}
+
+@test "statusline reads the context_window payload in preference to the transcript" {
+  # context_window is the authoritative source: it is what Claude Code itself
+  # measures, whereas the transcript sum is this script reconstructing the same
+  # number after the fact. When both are present the payload must win.
+  #
+  # The two are seeded with DIFFERENT totals precisely so the winner is
+  # identifiable: 83500 from the payload is 50%, while the transcript's 167000
+  # would be 100%. Reading the transcript here yields 100 and fails.
+  local t
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 167000 "$t"
+
+  local payload
+  payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s","context_window":{"total_input_tokens":83500,"context_window_size":200000,"used_percentage":99}}' "$t")
+  [ "$(ctx_pct "$payload")" -eq 50 ]
+}
+
+@test "statusline falls back to the transcript when context_window is absent" {
+  # Older CLI versions emit no context_window at all, and even a current one
+  # emits a null window at the very start of a session, before the first
+  # request. The transcript sum has to keep working for both.
+  local t payload
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 83500 "$t"
+
+  # Field absent entirely.
+  payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")
+  [ "$(ctx_pct "$payload")" -eq 50 ]
+
+  # Present but null, which is the start-of-session shape.
+  payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s","context_window":null}' "$t")
+  [ "$(ctx_pct "$payload")" -eq 50 ]
+
+  # Present, but with null members -- the same start-of-session state one level
+  # down. A `// empty` that only guarded the object would let a null token count
+  # through and render 0%.
+  payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s","context_window":{"total_input_tokens":null,"context_window_size":null}}' "$t")
+  [ "$(ctx_pct "$payload")" -eq 50 ]
+}
+
+@test "statusline scales the context_window payload to the compact point" {
+  # Same rescale as the transcript path, asserted on the payload path because it
+  # is separate code. 167000 of a declared 200000 window is the compact point.
+  [ "$(ctx_pct "$(context_window_payload 167000 200000)")" -eq 100 ]
+  [ "$(ctx_pct "$(context_window_payload 83500 200000)")" -eq 50 ]
+
+  # And the payload's own used_percentage (seeded at 99) must not be what is
+  # printed -- these readings prove the script computes its own.
+  [ "$(ctx_pct "$(context_window_payload 0 200000)")" -eq 0 ]
+}
+
+@test "statusline clamps a larger context_window_size down to CTX_MAX" {
+  # An extended-context session reports context_window_size 1000000. The
+  # configured CTX_MAX is a CEILING -- autoCompactWindow caps the effective
+  # window below the model's native one -- so a larger reported window must be
+  # clamped rather than believed.
+  #
+  # 167000 tokens is the compact point under the clamped 200000 window and must
+  # read 100. Believing the reported 1000000 would put it at (1000000-33000)
+  # usable and render 17 instead.
+  [ "$(ctx_pct "$(context_window_payload 167000 1000000)")" -eq 100 ]
+
+  # The clamp follows CTX_MAX rather than a hardcoded 200000: raise the conf to
+  # the full extended window and the same token count is a small fraction again.
+  export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/extended.conf"
+  cat >"$CLAUDE_CONTEXT_CONF" <<'EOF'
+CTX_MAX=1000000
+CTX_RESERVE=33000
+EOF
+  [ "$(ctx_pct "$(context_window_payload 967000 1000000)")" -eq 100 ]
+  [ "$(ctx_pct "$(context_window_payload 167000 1000000)")" -eq 17 ]
+}
+
+@test "statusline clamps a smaller context_window_size to itself, not to CTX_MAX" {
+  # The clamp is a MINIMUM of the two, not an unconditional override. A session
+  # genuinely running a smaller window than CTX_MAX must be scaled against the
+  # smaller one, or the gauge under-reports exactly the way the raw-window bug
+  # did. 33500 of a 100000-token window is half its 67000 usable span.
+  [ "$(ctx_pct "$(context_window_payload 33500 100000)")" -eq 50 ]
+}
+
+@test "statusline context percentage clamps at 100 past the compact point" {
+  # Compaction is not instantaneous and a single large turn can overshoot the
+  # threshold before it fires, so tokens above the usable window are a REAL
+  # state, not an impossible one. The gauge must saturate rather than print a
+  # nonsensical "ctx:120%".
+  #
+  # 200000 is a genuine OVERSHOOT of the 167000 compact point, not a full
+  # window: unclamped it computes to 120. Seeding the compact point itself here
+  # would pass without any clamp at all.
+  local t
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+
+  make_transcript 200000 "$t"
+  [ "$(ctx_pct "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")")" -eq 100 ]
+
+  # The bar fill saturates with it, rather than running past the bar's end.
+  # The bar line is isolated into a variable BEFORE the escapes are stripped:
+  # piping the whole render through the strip would fold the metrics line into
+  # the count, since with a full bar there is no track colour left to cut at.
+  local out fill
+  out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
+  fill=$(printf '%s' "$out" | sed $'s/\033\\[38;5;238m.*//' |
+    sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
+  [ "$fill" -eq 100 ]
 }
 
 # Every SGR foreground code appearing in the bar's FILLED run, in order. The
@@ -723,7 +887,7 @@ expect_cell_cube() { # <i> <n>
   # run and fail the final assertion.
   local t out codes
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
-  make_transcript 200000 "$t"
+  make_transcript 167000 "$t"
 
   # Truecolor: the exact endpoint RGBs of the waypoint ramp.
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
@@ -746,7 +910,7 @@ expect_cell_cube() { # <i> <n>
   # would reject the very shape that keeps the midpoint from going muddy.
   local t out prev=999 h
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
-  make_transcript 200000 "$t"
+  make_transcript 167000 "$t"
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
 
   for rgb in $(bar_codes "$out"); do
@@ -777,7 +941,7 @@ expect_cell_cube() { # <i> <n>
   # 35% of its width, and no longer green-dominant.
   local t out cells cell h
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
-  make_transcript 200000 "$t"
+  make_transcript 167000 "$t"
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
 
   # Cell 35 of 100 is the 35% mark.
@@ -804,7 +968,7 @@ expect_cell_cube() { # <i> <n>
   # large enough to read as a band.
   local t out n_distinct max_step
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
-  make_transcript 200000 "$t"
+  make_transcript 167000 "$t"
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
 
   n_distinct=$(bar_cell_codes "$out" | sort -u | wc -l | tr -d ' ')
@@ -832,9 +996,13 @@ expect_cell_cube() { # <i> <n>
   local t half deep
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
 
-  make_transcript 100000 "$t"
+  # Fractions of the USABLE window (167000), not of the raw one: 83500 is half
+  # and 150300 is 90%. Both must sit below the compact point, or the two bars
+  # would clamp to the same full width and the length comparison below could
+  # not distinguish them.
+  make_transcript 83500 "$t"
   half=$(bar_codes "$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)")
-  make_transcript 180000 "$t"
+  make_transcript 150300 "$t"
   deep=$(bar_codes "$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)")
 
   [ -n "$half" ]
@@ -846,11 +1014,12 @@ expect_cell_cube() { # <i> <n>
 @test "statusline progress bar cell colours match the position formula exactly" {
   # Pins the interpolation itself, not just its endpoints: expand the run-length
   # coalesced escapes back to one code per cell and compare every one against an
-  # independently recomputed ramp. At 112 columns the bar is 100 cells and a full
-  # context fills all of them. Both paths, because they are different code.
+  # independently recomputed ramp. At 112 columns the bar is 100 cells, and a
+  # context at the auto-compact point (167000) fills all of them. Both paths,
+  # because they are different code.
   local t out n cell expected
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
-  make_transcript 200000 "$t"
+  make_transcript 167000 "$t"
 
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
   n=0
@@ -1511,4 +1680,100 @@ age_rows() { # <days>
   bash -n "$conf"
   grep -q '^STATUSLINE_COLOR_RETENTION_DAYS=' "$conf"
   grep -q '^STATUSLINE_COLOR_DB=' "$conf"
+}
+
+@test "the tracked context-window.conf parses and defines both constants" {
+  local conf="${BATS_TEST_DIRNAME}/../claude/context-window.conf"
+
+  bash -n "$conf"
+  grep -q '^CTX_MAX=' "$conf"
+  grep -q '^CTX_RESERVE=' "$conf"
+}
+
+@test "context-window.conf values override the statusline's inline defaults" {
+  # The whole point of de-hardcoding: retuning the window must not require
+  # touching the script. A 100000 window with a 50000 reserve leaves 50000
+  # usable, so 25000 tokens is exactly half the gauge -- a number that is NOT
+  # 50% under the built-in 200000/33000 defaults (it would be ~15%), so this
+  # cannot pass unless the conf was actually read.
+  local t
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 25000 "$t"
+
+  export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/context-window.conf"
+  cat >"$CLAUDE_CONTEXT_CONF" <<'EOF'
+CTX_MAX=100000
+CTX_RESERVE=50000
+EOF
+
+  [ "$(ctx_pct "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")")" -eq 50 ]
+}
+
+@test "a missing or unreadable context-window.conf still renders a statusline" {
+  # The "absence must be a working state" rule. Neither an absent file nor one
+  # that cannot be read may break the gauge: both fall through to the inline
+  # defaults, where 83500 tokens is half of the 167000 usable window.
+  local t out
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 83500 "$t"
+  local payload
+  payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")
+
+  # Absent.
+  export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/does-not-exist.conf"
+  [ "$(ctx_pct "$payload")" -eq 50 ]
+
+  # Present but unreadable. chmod 000 is not honoured for root, which would make
+  # this pass vacuously, so the mode is verified to actually deny a read first.
+  export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/unreadable.conf"
+  echo 'CTX_MAX=1' >"$CLAUDE_CONTEXT_CONF"
+  chmod 000 "$CLAUDE_CONTEXT_CONF"
+  if [ ! -r "$CLAUDE_CONTEXT_CONF" ]; then
+    [ "$(ctx_pct "$payload")" -eq 50 ]
+  fi
+
+  # And the line must be whole, not merely non-empty: two rendered lines.
+  out=$(statusline_run 160 "$payload")
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ]
+}
+
+@test "a non-numeric context-window setting falls back to the default" {
+  # Mirrors the retention-days guard in session-colors.sh: a typo must not reach
+  # the arithmetic. CTX_MAX=lots would make $((CTX_MAX - CTX_RESERVE)) either
+  # error to stderr -- which discards the whole statusline -- or silently
+  # evaluate the bare word as 0.
+  local t
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 83500 "$t"
+
+  export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/bad-context.conf"
+  cat >"$CLAUDE_CONTEXT_CONF" <<'EOF'
+CTX_MAX=lots
+CTX_RESERVE=-5
+EOF
+
+  # Both fall back, so this is the default 167000-usable scale again.
+  [ "$(ctx_pct "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")")" -eq 50 ]
+}
+
+@test "a reserve at or above the window reads 0 rather than dividing by zero" {
+  # A misconfiguration, but it must degrade to a harmless reading. awk would
+  # otherwise print "inf" or "nan" straight into the ctx: segment, and a
+  # non-numeric CTX_PCT then fails the `-ge 80` colour test with a stderr byte,
+  # which makes Claude Code discard the entire statusline.
+  local t out
+  t="${BATS_TEST_TMPDIR}/transcript.jsonl"
+  make_transcript 50000 "$t"
+
+  export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/inverted.conf"
+  cat >"$CLAUDE_CONTEXT_CONF" <<'EOF'
+CTX_MAX=100000
+CTX_RESERVE=100000
+EOF
+
+  local payload
+  payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")
+  [ "$(ctx_pct "$payload")" -eq 0 ]
+  out=$(statusline_run 160 "$payload")
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ]
 }

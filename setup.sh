@@ -179,6 +179,7 @@ setup_claude() {
   link "$REPO_DIR/claude/global-instructions.md" "$HOME/.claude/CLAUDE.md" || return 1
   link "$REPO_DIR/claude/settings.json" "$HOME/.claude/settings.json" || return 1
   link "$REPO_DIR/claude/statusline.conf" "$HOME/.claude/statusline.conf" || return 1
+  link "$REPO_DIR/claude/context-window.conf" "$HOME/.claude/context-window.conf" || return 1
   link "$REPO_DIR/claude/scripts/statusline.sh" "$HOME/.claude/scripts/statusline.sh" || return 1
   link "$REPO_DIR/claude/lib/session-colors.sh" "$HOME/.claude/lib/session-colors.sh" || return 1
   link "$REPO_DIR/claude/hooks/block-inefficient-bash.sh" "$HOME/.claude/hooks/block-inefficient-bash.sh" || return 1

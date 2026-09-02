@@ -18,19 +18,90 @@ BLUE=$'\033[34m'
 RED=$'\033[31m'
 RESET=$'\033[0m'
 
-# Context window ceiling (matches autoCompactWindow in settings.json)
-CTX_MAX=200000
+# Context-window constants, read from context-window.conf.
+#
+# NOT statusline.conf, and the split is deliberate. statusline.conf holds this
+# script's own DISPLAY tunables -- how long a colour assignment lives, where the
+# colour database sits. These two are a different kind of thing entirely: they
+# describe when CLAUDE CODE ITSELF auto-compacts. The statusline only reads them
+# so it can draw the gauge against the right scale; it does not own that
+# behaviour and cannot influence it. Anything else that needs to reason about
+# the compaction threshold -- a hook, some other script -- reads the same file.
+#
+# Sourced DIRECTLY rather than by way of session-colors.sh: that library is
+# sourced much further down, only when a colour is actually wanted, and is
+# skipped outright when unreadable. These values are needed before any of that.
+#
+# Every value has an inline default below, so a missing, unreadable, or
+# half-written conf leaves the statusline working -- the same contract
+# session-colors.sh keeps for its own settings.
+CLAUDE_CONTEXT_CONF="${CLAUDE_CONTEXT_CONF:-$HOME/.claude/context-window.conf}"
+# shellcheck source=/dev/null
+[ -r "$CLAUDE_CONTEXT_CONF" ] && . "$CLAUDE_CONTEXT_CONF" 2>/dev/null
+
+: "${CTX_MAX:=200000}"
+# 33000 is EMPIRICALLY DERIVED, not documented by Anthropic. Measured across 93
+# compact_boundary records in ~/.claude/projects/*/*.jsonl, "200000 - preTokens"
+# fell in a tight 32852..33273 band. It is an ABSOLUTE output budget rather than
+# a fraction of the window: the changelog puts Sonnet's compaction on a 1M
+# window "at about 967K", the same ~33000 held back at five times the size.
+#
+# To re-measure if compaction behaviour drifts, take the token count recorded
+# immediately before each compact_boundary and subtract it from that session's
+# window:
+#   jq -r 'select(.type=="compact_boundary")
+#          | .compactMetadata.preTokens' ~/.claude/projects/*/*.jsonl
+: "${CTX_RESERVE:=33000}"
+
+# A conf typo must not reach the arithmetic below: $((CTX_MAX - CTX_RESERVE))
+# on a bare word either errors to stderr -- which makes Claude Code discard the
+# whole statusline -- or silently evaluates it as 0. Empty, non-numeric, and
+# negative all land here; the pattern rejects a leading "-" as a non-digit.
+case "$CTX_MAX" in '' | *[!0-9]*) CTX_MAX=200000 ;; esac
+case "$CTX_RESERVE" in '' | *[!0-9]*) CTX_RESERVE=33000 ;; esac
 
 MODEL=$(echo "$input" | jq -r '.model.display_name // "Opus"' 2>/dev/null)
 [ -z "$MODEL" ] && MODEL="Opus"
 
-# Token usage is NOT in the statusline payload; it must be derived from the
-# session transcript. Sum the last non-sidechain assistant usage block:
+# PRIMARY token source: the payload's context_window object, emitted since CLI
+# v2.1.251. total_input_tokens is input + cache_creation + cache_read and
+# EXCLUDES output, which is exactly the basis the compaction check uses -- so it
+# is the number the threshold is actually compared against, not an approximation
+# of it.
+#
+# The sibling used_percentage field is deliberately NOT used. It divides by the
+# RAW window, so it reads ~83.5 at the instant compaction fires; adopting it
+# would reintroduce the very bug this scaling exists to fix.
+#
+# Both members are read with a `// empty` guard because the object is present
+# but NULL-valued at the very start of a session, before the first request has
+# been made.
+CW_TOK=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty' 2>/dev/null)
+CW_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // empty' 2>/dev/null)
+case "$CW_TOK" in '' | *[!0-9]*) CW_TOK="" ;; esac
+case "$CW_SIZE" in '' | *[!0-9]*) CW_SIZE="" ;; esac
+
+# The reported window is a MINIMUM against CTX_MAX, never an override: an
+# extended-context session reports 1000000, but settings.json's autoCompactWindow
+# can cap the effective window below the model's native size, and CTX_MAX is
+# where that cap is recorded. Taking the smaller of the two honours both -- a
+# genuinely smaller session window is respected, a larger one is clamped.
+[ -n "$CW_SIZE" ] && [ "$CW_SIZE" -lt "$CTX_MAX" ] && CTX_MAX=$CW_SIZE
+
+# FALLBACK token source, for a CLI predating context_window and for the null
+# window at the start of a session. Derived from the session transcript: sum the
+# last non-sidechain assistant usage block, where
 # input + cache_read + cache_creation + output == live context occupancy.
 # Sidechain entries are subagent turns and do not consume main-thread context.
+#
+# It includes output_tokens, which context_window's basis does not, so the two
+# do not agree exactly -- measured within 0.2-2% of the CLI's own preTokens,
+# which is why it stays as the fallback rather than the primary.
 TRANSCRIPT=$(echo "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
 TOK_RAW=0
-if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+if [ -n "$CW_TOK" ]; then
+  TOK_RAW=$CW_TOK
+elif [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   TOK_RAW=$(jq -s '
         [ .[] | select(.isSidechain != true and .message.usage != null) ]
         | last
@@ -47,7 +118,27 @@ case "$TOK_RAW" in '' | *[!0-9]*) TOK_RAW=0 ;; esac
 TOK_K=$(awk -v t="$TOK_RAW" 'BEGIN {printf "%.1fk", t/1000}')
 
 # ctx: % of context window consumed; turns RED past 80%
-CTX_PCT=$(awk -v u="$TOK_RAW" -v m="$CTX_MAX" 'BEGIN {printf "%.0f", (m>0)?(u/m*100):0}')
+#
+# The denominator is the USABLE window, not the raw one. Claude Code
+# auto-compacts once the input token count reaches CTX_MAX - CTX_RESERVE, so
+# THAT point -- not the raw ceiling -- is what "full" means to the user.
+# Dividing by CTX_MAX read only ~84% at the instant compaction fired, showing
+# roughly a seventh of the bar as headroom that did not exist.
+#
+# Clamped at 100 rather than left to overshoot: compaction is not instantaneous
+# and a single large turn can cross the threshold before it fires, so tokens
+# above the usable window are a REAL state that must saturate the gauge instead
+# of printing "ctx:120%".
+#
+# CTX_USABLE going non-positive is a misconfiguration (a reserve at or above the
+# window), not an arithmetic accident. It reads 0% rather than dividing by zero,
+# which awk would render as "inf" or "nan" straight into the statusline.
+CTX_USABLE=$((CTX_MAX - CTX_RESERVE))
+CTX_PCT=$(awk -v u="$TOK_RAW" -v m="$CTX_USABLE" 'BEGIN {
+    p = (m > 0) ? (u / m * 100) : 0
+    if (p > 100) p = 100
+    printf "%.0f", p
+  }')
 CTX_COL=$YELLOW
 [ "$CTX_PCT" -ge 80 ] && CTX_COL=$RED
 

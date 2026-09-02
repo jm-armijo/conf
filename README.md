@@ -101,6 +101,7 @@ one symlink per file, so the rest stays machine-local and out of git:
 | `claude/global-instructions.md` | `~/.claude/CLAUDE.md` — global instructions applied to every project |
 | `claude/settings.json` | `~/.claude/settings.json` — model, env flags, hooks, statusline, enabled plugins, UI prefs |
 | `claude/statusline.conf` | `~/.claude/statusline.conf` — tunables for the session-colour assignments |
+| `claude/context-window.conf` | `~/.claude/context-window.conf` — the context window and its auto-compact reserve |
 | `claude/scripts/statusline.sh` | `~/.claude/scripts/statusline.sh` |
 | `claude/lib/session-colors.sh` | `~/.claude/lib/session-colors.sh` — the colour database, also sourceable from your shell |
 | `claude/hooks/block-inefficient-bash.sh` | `~/.claude/hooks/block-inefficient-bash.sh` |
@@ -163,8 +164,37 @@ A context-usage bar on top, then a metrics line:
 ~/code/conf |  master | task     Opus | ctx:12% | 24.1k tok | 14:22:01 | cpu:3% mem:412M
 ```
 
+- **Full means the auto-compact point, not the raw window.** Claude Code compacts
+  once the input token count reaches `CTX_MAX - CTX_RESERVE` — 167,000 on a
+  200,000 window — because the reserve it holds back for output is an *absolute*
+  token budget, not a fraction of the window. So the gauge is scaled against that
+  threshold and reads 100% exactly when compaction fires. Scaling against the raw
+  200,000 read only ~84% at that moment, showing about a seventh of the bar as
+  headroom that did not exist. Past the threshold it clamps at 100% rather than
+  overshooting, since one large turn can cross the line before compaction runs.
+
+  The token count and window size come from the payload's `context_window` object
+  when the CLI provides one, falling back to summing the session transcript on
+  older versions and at the very start of a session. Both numbers live in
+  `claude/context-window.conf`, symlinked to `~/.claude/context-window.conf` and
+  live the moment you save it:
+
+  ```bash
+  CTX_MAX=200000      # raise to 1000000 for an extended-context model
+  CTX_RESERVE=33000   # empirical; NOT documented by Anthropic
+  ```
+
+  These are facts about *Claude Code's* behaviour rather than statusline
+  settings, which is why they are a separate file from `statusline.conf` — any
+  other script needing to reason about the compaction threshold should read them
+  from here. `CTX_RESERVE` was measured across 93 `compact_boundary` records
+  (`200000 - preTokens` fell in a 32,852–33,273 band) and is confirmed absolute by
+  the 1M-window case compacting at ~967K. Both settings have inline defaults in
+  the script, so an absent, unreadable or half-written config falls back rather
+  than breaking the statusline; a non-numeric value falls back too, and a reserve
+  at or above the window reads 0% instead of dividing by zero.
 - **The bar is a context gauge with a positional gradient.** The filled run is
-  the percentage of the context window in use. Its colour is a function of each
+  the percentage of the usable context window in use. Its colour is a function of each
   cell's **position along the bar**, not of the percentage: cell `i` of `n` is
   coloured at fraction `i/(n-1)`, so the leftmost cell is always green and the
   rightmost cell of a full bar is always red, whatever the fill. Growing context
@@ -504,7 +534,7 @@ cp -R "$OBS"/. "obs/$RES"/         # .gitignore keeps only the portable subset
 - **prompt** — edit `starship/starship.toml` (sections, colours, prompt character, truncation). It's symlink-live like the rest, so edits apply on the next prompt; no reinstall. To revert to the old prompt, set `ZSH_THEME="agnoster"` in `zsh/zshrc` — `zsh/agnoster.zsh-theme` is still tracked and still installed, and the Starship init is guarded so it simply does nothing if the binary is absent.
 - **git** — edit `~/.gitconfig` or run `git config --global ...` as usual; the symlink means changes (aliases and everything else) land in `git/gitconfig` automatically. Commit when ready.
 - **ghostty** — edit `~/.config/ghostty/config` directly; the symlink means changes land in `ghostty/config` automatically. Commit when ready.
-- **Claude Code** — edit `~/.claude/CLAUDE.md` (tracked as `claude/global-instructions.md`), `~/.claude/statusline.conf`, the skills, or the scripts directly; the symlinks mean changes land in `claude/` automatically. A *new* skill needs a line in `setup_claude_skills` before it is tracked, and `settings.json` changed from inside a session is worth a quick `ls -l` (see [above](#one-caveat-on-settingsjson)). Commit when ready.
+- **Claude Code** — edit `~/.claude/CLAUDE.md` (tracked as `claude/global-instructions.md`), `~/.claude/statusline.conf`, `~/.claude/context-window.conf`, the skills, or the scripts directly; the symlinks mean changes land in `claude/` automatically. A *new* skill needs a line in `setup_claude_skills` before it is tracked, and `settings.json` changed from inside a session is worth a quick `ls -l` (see [above](#one-caveat-on-settingsjson)). Commit when ready.
 
 ## Committing
 
