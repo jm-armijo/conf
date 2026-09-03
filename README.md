@@ -452,83 +452,24 @@ than read from `~/.config/claude-templates`, so the skill works on a fresh
 machine with nothing else installed — that path is still honoured when it
 exists, as the machine-local override.
 
-### How plans get written
+### How plans get written and how work gets done
 
-`plan-writing` is **the instructions for writing a plan**, not a formatter run
-over one that already exists. It used to be the latter, and that was the problem:
-with the plan's shape described in prose inside the skill, there was nowhere to
-adjust *how plans are made* short of rewriting the skill.
+Two skills. `plan-writing` writes the plan to `PLAN.html` and `TODO.md`, opens it
+in the browser, and halts for approval — **the chat gets one line**, not a
+summary, because you read the plan in the browser. `assets/UI_TEMPLATE.html` is
+an input the model reads *while* planning, so changing the shape of every future
+plan is an edit to that template and nothing else.
 
-So `assets/UI_TEMPLATE.html` is now an input the model reads **while planning** —
-its sections are what a plan has to cover, which means reading it early changes
-what gets researched. `SKILL.md` deliberately does not repeat that list. **To
-change the shape of every future plan, edit the template and nothing else.**
+`development` then does the work, in five steps: `writing tests`, `coding`,
+`bot review`, `draft pr`, `author review`. Tests always move first, `--no-verify`
+is never allowed, and every task ends in a draft PR that is a hard stop until you
+review it. Five is a baseline — a task needing a migration gets an extra step,
+shown in `PLAN.html` so you can veto it first.
 
-Nothing about how a plan is researched or reasoned about changed. What changed is
-where it lands:
-
-- `PLAN.html` and `TODO.md`, opened in the browser.
-- **The chat gets one line** — "I've generated the plan, available at
-  `PLAN.html`" — and no summary, headings or bullets. You read the plan in the
-  browser; repeating it in the terminal is the duplication the files exist to
-  remove. Stated in the skill, the template and the hook's block message, each
-  with a test.
-
-### How work gets done
-
-`development` is the skill that used to be called `plan-execution`, and the
-rename is the whole point. A skill described as *"execute an approved plan"*
-never triggers, because **nobody labels the phase** — after a plan is approved
-you do not think "now I open the skill for implementing the plan", you just
-start working. It is the same failure mode that made `plan-writing` need a hook.
-
-So it is described by the *activity* — writing a feature, fixing a bug,
-changing behaviour — and fires on "let's build X" with no plan in sight. Its
-five steps therefore apply to **every piece of work**, plan or not:
-
-1. `writing tests` — always first, for *changes* as well as additions.
-2. `coding` — the minimum to pass, refactoring included; loop back to 1.
-3. `bot review` — `/code-review high`, fixing what it finds.
-4. `draft pr` — one atomic commit, push, `gh pr create --draft`, opened in the
-   browser.
-5. `author review` — a hard stop until the PR is ready for review.
-
-Steps 4 and 5 used to be three: a separate "atomic commit and push" was merged
-into `draft pr`, because a GitHub draft PR cannot exist without a commit and a
-push behind it. The rule that merge risks losing is stated explicitly under that
-step: **`--no-verify` is never allowed** — a failing pre-commit hook is fixed as
-part of the step, and the step is not done until the push succeeds.
-
-Five is a **baseline, not a ceiling**: a task needing a migration or a manual
-verification gets an extra step, named in the same lowercase style and shown in
-`PLAN.html` so it can be vetoed before work starts. Branch creation is implicit
-at a task's start, not a step.
-
-The unit is a **task** — a slice of work worth its own PR. It was called an
-"increment" until it was renamed; the meaning did not change.
-
-### Why TODO.md declares no status
-
-`TODO.md` is a to-do list and nothing else. The contract above lives in the
-`development` skill, not in the template, so it is not copied into every
-generated file.
-
-**Status is derived from the checkboxes**, never written down. There is no
-status column, no front-matter, no marker comment — a declared status can
-disagree with the boxes, and the old Progress table was exactly that
-duplication:
-
-| state | meaning |
-|---|---|
-| not started | task unchecked, zero steps checked |
-| in progress | task unchecked, at least one step checked |
-| completed | task checked — its steps are trusted done |
-
-The current step is the first unchecked one, and every task lists **all** its
-steps whatever its state, so what is pending is always visible. The shape is
-kept rigidly uniform — identical headings, numbered steps, the short name always
-in the same position — so a script can answer "which are done, which is in
-progress, what step" without encoding edge cases.
+`TODO.md` is a to-do list and nothing else. **Status is derived from the
+checkboxes**, never declared: a task with no steps checked is not started, one
+with some is in progress, a checked task is done. The shape is kept rigidly
+uniform so a script can parse it without edge cases.
 
 ### Adding a skill
 
@@ -540,44 +481,19 @@ mv ~/.claude/skills/<name> claude/skills/<name>   # move the real dir into the r
 
 ### Vendored bundles
 
-`claude/vendor/` holds third-party JavaScript that a generated `PLAN.html` loads
-from `file://`. Currently one file: Mermaid 11, the diagram renderer.
+`claude/vendor/` holds third-party JavaScript a generated `PLAN.html` loads from
+`file://` — currently just Mermaid 11, the diagram renderer. It is the one
+directory symlink under `~/.claude`, because nothing but this repo writes there.
 
 > **Do not open `claude/vendor/mermaid.min.DO-NOT-READ.js`.** It is 3.4MB of
 > minified build output — roughly 750,000 tokens, several times an LLM context
 > window. Reference it by path only; a version bump is a re-download, never a
 > hand-edit. `claude/vendor/!READ-ME-FIRST.md` has the command.
 
-This is the **only directory symlink under `~/.claude`**, and the exception is
-about ownership rather than taste. `~/.claude` and `~/.claude/skills` are shared
-with Claude Code and its plugins, which is why everything else there is linked
-per file or per skill. Nothing but this repo writes to `~/.claude/vendor`, so the
-whole directory is ours — one link covers it, and a second bundle needs no change
-to `setup.sh`.
-
-It is its own `run()` step rather than a line inside `setup_claude`, so a machine
-where the link fails still gets `settings.json`, the statusline and the hooks — a
-plan just renders without its diagram. `setup_claude_skills` is split out for the
-same reason, and it also records failures across its loop (`status=1`) instead of
-returning on the first one, so a single renamed skill does not silently skip the
-rest.
-
-**It has to be a classic `<script src>`, not an ESM `import`.** `PLAN.html` is
-opened from `file://`, where a module import fails with *"Failed to fetch
-dynamically imported module"* even for a local file — module fetches go through
-CORS, and `file://` origins are opaque. A plain `<script src>` is exempt and
-loads the same file fine. Verified in headless Chrome both ways: the ESM form
-rendered no SVG at all, the classic form renders one. A CDN URL is worse again —
-unreachable offline, and redundant once the file is vendored. A test asserts the
-template contains neither `cdn.jsdelivr.net` nor `type="module"`, because
-reverting this breaks every diagram *silently*: no error, the diagram source just
-sits on the page as text.
-
-`UI_TEMPLATE.html` writes the path as `{{VENDOR_DIR}}/mermaid.min.DO-NOT-READ.js`
-and the skill substitutes `{{VENDOR_DIR}}` with `$HOME/.claude/vendor`, expanded.
-Absolute, because `PLAN.html` is written into whatever repo you are planning in
-and HTML does not expand `~`. Only the **directory** is substituted — a
-whole-file placeholder invites an agent to go and inspect what it names.
+It must load as a classic `<script src>`: from `file://` an ESM `import` fails
+even for a local file, and reverting to one breaks every diagram silently. A
+test asserts the template contains neither `cdn.jsdelivr.net` nor
+`type="module"`.
 
 ### One caveat on `settings.json`
 
@@ -720,24 +636,17 @@ can change how many tests bats parses.
 
 ### The plan-mode gate
 
-`claude/hooks/plan-artifacts-on-exit.sh` is what makes plan mode emit `PLAN.html`
-and `TODO.md` without the `plan-writing` skill being named. Left alone the plan dies
-in the terminal as a wall of summary text, and invoking the skill by name is the
-thing that kept being forgotten — so the exit itself is the trigger: block the first
-`ExitPlanMode`, point the model at the skill, let the retry through. Blocking at the
-exit is a late trigger for an early instruction, which is why the message sends the
-model back to the template rather than asking it to reformat what it has.
+`claude/hooks/plan-artifacts-on-exit.sh` makes plan mode emit `PLAN.html` and
+`TODO.md` without the `plan-writing` skill being named — invoking it by name was
+the thing that kept being forgotten, so the exit is the trigger: block the first
+`ExitPlanMode`, point the model at the skill, let the retry through.
 
-**`PreToolUse` is the load-bearing part.** It runs *before* the tool does, so the
-block lands before the approval prompt is ever drawn: by the time the user is asked
-to approve, `PLAN.html` exists, is open in their browser, and the plan is still
-editable. A `PostToolUse` hook would render the plan at the instant it stopped being
-reviewable.
+**`PreToolUse` is the load-bearing part.** It runs before the tool, so the plan is
+in the browser and still editable when the approval prompt appears. `PostToolUse`
+would render it at the instant it stopped being reviewable.
 
-The hook contract is exit 2 to block (stderr is fed back to the model) and exit 0 to
-allow. It must fire **once per plan**, so it re-blocks only while the artifacts are
-missing — without that check it would block its own retry and plan mode would be
-inescapable. It also exits 0 for a non-git `cwd` (a scratch directory has no branch
-or PR to hang tasks off) and fails open on malformed input. `cwd` comes from the
-hook payload, never `$PWD`, which is the hook's own directory rather than the
-session's. Kept POSIX-ish on purpose — macOS `/bin/bash` is 3.2.
+Exit 2 blocks (stderr goes back to the model), exit 0 allows. It re-blocks only
+while the artifacts are missing — otherwise it would block its own retry and plan
+mode would be inescapable. It exits 0 for a non-git `cwd` and fails open on bad
+input. `cwd` comes from the payload, never `$PWD`.
+
