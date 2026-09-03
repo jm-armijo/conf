@@ -1,9 +1,4 @@
 #!/bin/bash
-#
-# Set up a new machine from this repo. Idempotent; safe to re-run.
-# Per-app install strategies and their rationale: see README.md.
-#
-# Usage: ./setup.sh
 
 set -uo pipefail
 
@@ -11,8 +6,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 errors=()
 
-# Records a failing step instead of aborting, so one broken step never blocks
-# the rest.
+# Returns 0 even on failure, deliberately: one broken step must not block the rest.
 run() {
   local desc="$1"
   shift
@@ -24,7 +18,6 @@ run() {
   return 0
 }
 
-# Symlink $1 -> $2, backing up an existing real file/dir/symlink at $2 first.
 link() {
   local src="$1" dest="$2"
 
@@ -39,7 +32,7 @@ link() {
   fi
 
   if [[ -e "$dest" || -L "$dest" ]]; then
-    # Declared then assigned separately so `local` doesn't mask date's exit status.
+    # Split from the assignment: `local x=$(...)` masks the command's exit status.
     local backup
     backup="${dest}.backup.$(date +%Y%m%d%H%M%S)"
     mv "$dest" "$backup" || {
@@ -59,8 +52,6 @@ setup_zsh() {
   link "$REPO_DIR/zsh/agnoster.zsh-theme" "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" || return 1
 }
 
-# Package manager: starship is a compiled binary, so there is nothing tracked
-# here to symlink. See README.md.
 setup_starship() {
   if command -v starship >/dev/null 2>&1; then
     echo "ok:   starship already installed ($(starship --version | head -n 1))"
@@ -76,14 +67,12 @@ setup_starship() {
   echo "starship: installed (restart your shell to apply)"
 }
 
-# Its own step, not folded into setup_starship, so the config still lands when
-# the brew install is skipped or fails.
+# Separate from setup_starship so the config still lands when brew is skipped or fails.
 setup_starship_config() {
   link "$REPO_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
 }
 
 setup_git() {
-  # Whole-file symlink so `git config --global` writes back into the repo.
   link "$REPO_DIR/git/gitconfig" "$HOME/.gitconfig"
 }
 
@@ -93,7 +82,7 @@ setup_ghostty() {
 
 setup_magnet() {
   # `defaults import`, not a symlink: cfprefsd rewrites the plist atomically and
-  # would clobber one. See README.md.
+  # would clobber one.
   local plist="$REPO_DIR/magnet/com.crowdcafe.windowmagnet.plist"
   if [[ ! -f "$plist" ]]; then
     echo "skip: magnet plist missing $plist"
@@ -105,8 +94,7 @@ setup_magnet() {
 
 setup_obs() {
   # DIRECTORY symlink, never per-file: OBS's temp-then-rename replaces a file
-  # symlink with a real file, but leaves a directory symlink intact. Junk it
-  # writes there is gitignored. See README.md.
+  # symlink with a real file, but leaves a directory symlink intact.
   local dest="$HOME/Library/Application Support/obs-studio"
   local configs=() d choice
   if [[ -d "$REPO_DIR/obs" ]]; then
@@ -136,10 +124,8 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
-# Per-file links, never a link of ~/.claude itself: that directory is shared
-# with Claude Code's own runtime state (transcripts, caches, plugin installs).
-# global-instructions.md -> ~/.claude/CLAUDE.md is the one renamed link; Claude
-# Code requires that filename. See README.md.
+# Per-file links, never a link of ~/.claude itself: that directory is shared with
+# Claude Code's own runtime state. The CLAUDE.md rename is required by Claude Code.
 setup_claude() {
   link "$REPO_DIR/claude/global-instructions.md" "$HOME/.claude/CLAUDE.md" || return 1
   link "$REPO_DIR/claude/settings.json" "$HOME/.claude/settings.json" || return 1
@@ -151,17 +137,15 @@ setup_claude() {
   link "$REPO_DIR/claude/hooks/plan-artifacts-on-exit.sh" "$HOME/.claude/hooks/plan-artifacts-on-exit.sh" || return 1
 }
 
-# Third-party bundles PLAN.html loads from file://. The one whole-DIRECTORY link
-# under ~/.claude, because nothing but this repo writes there — so a second
-# bundle needs no line here. Its own step so a failure still leaves the rest
-# installed. See README.md.
+# The exception to setup_claude's per-file rule: nothing outside this repo writes
+# to ~/.claude/vendor, so one directory link is safe and a second bundle needs no
+# line here.
 setup_claude_vendor() {
   link "$REPO_DIR/claude/vendor" "$HOME/.claude/vendor"
 }
 
-# One link per skill, never a link of ~/.claude/skills: Claude Code's plugins
-# write their own state into that directory. A new tracked skill needs a line in
-# the loop below — that explicit opt-in is the point. See README.md.
+# One link per skill, never a link of ~/.claude/skills: Claude Code's plugins write
+# their own state there. Do not glob the list — the explicit opt-in is the point.
 setup_claude_skills() {
   local skill status=0
   for skill in bug-fixing clean-code development plan-writing ui-separation; do
@@ -170,8 +154,7 @@ setup_claude_skills() {
   return "$status"
 }
 
-# Only run when executed directly; sourcing (the bats suite does) loads the
-# helpers without touching the machine. Keep new side effects inside this guard.
+# Keep new top-level side effects inside this guard: the bats suite sources this file.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "Setting up from $REPO_DIR"
 

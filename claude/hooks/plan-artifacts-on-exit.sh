@@ -1,17 +1,15 @@
 #!/bin/bash
-# PreToolUse/ExitPlanMode gate: make plan mode always emit PLAN.html + TODO.md.
-# Why PreToolUse, and why it must fire once: see README "The plan-mode gate".
+# PreToolUse on ExitPlanMode, never PostToolUse: the artifacts must exist while the
+# plan is still editable, which is before the approval prompt is drawn.
 # Contract: exit 2 => blocked, stderr fed back to the model; exit 0 => allow.
-# Kept POSIX-ish on purpose - macOS /bin/bash is 3.2.
 
 input=$(cat)
 
-# cwd from the payload, not $PWD -- $PWD is the hook's own, not the session's.
+# cwd from the payload -- $PWD is the hook's own directory, not the session's.
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$cwd" ] && exit 0
 
-# Both artifacts present => the skill has run; allowing here is what stops the
-# gate re-blocking its own retry and making plan mode inescapable.
+# Without this branch the gate re-blocks its own retry and plan mode is inescapable.
 [ -f "$cwd/PLAN.html" ] && [ -f "$cwd/TODO.md" ] && exit 0
 
 # Not a git repo => no branch, no PR, nothing to hang tasks off.

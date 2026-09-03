@@ -1,11 +1,7 @@
 #!/usr/bin/env bats
-#
-# Rationale for the non-obvious assertions here lives in test/README.md.
-# Run: bats test/
 
 setup() {
-  # setup.sh's own run() shadows bats' helper; tests must call bats_run.
-  # See test/README.md, "bats_run, never run".
+  # setup.sh's own run() shadows bats' helper; tests must call bats_run, never run.
   eval "bats_run() $(declare -f run | tail -n +2)"
 
   source "${BATS_TEST_DIRNAME}/../setup.sh"
@@ -15,7 +11,6 @@ setup() {
   echo "source content" >"$SRC"
 }
 
-# Count of backups next to $DEST, proving one was / was not made.
 backup_count() {
   local n=0 f
   for f in "${DEST}".backup.*; do
@@ -48,7 +43,6 @@ backup_count() {
   bats_run link "$SRC" "$DEST"
   [ "$status" -eq 0 ]
   [[ "$output" == ok:* ]]
-  # A re-run must not back up the symlink it just made, or setup.sh litters $HOME.
   [ "$(backup_count)" = "0" ]
   [ "$(readlink "$DEST")" = "$SRC" ]
 }
@@ -90,12 +84,8 @@ backup_count() {
   [ ! -L "$DEST" ]
 }
 
-# --- setup_starship --------------------------------------------------------
-
-# HOME redirected into the tmpdir; PATH holds ONLY the stubs a test asks for, so
-# "not stubbed" means absent to `command -v` rather than the developer's real
-# binary (see test/README.md, "Isolation from the developer's machine").
-# $BREW_LOG records each brew invocation; `touch $BREW_FAIL` makes brew fail.
+# PATH holds ONLY the stubs a test asks for, so "not stubbed" means absent to
+# `command -v` rather than the developer's real binary.
 starship_env() {
   export HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "$HOME"
@@ -138,7 +128,6 @@ STUB
 
   bats_run setup_starship
   [ "$status" -eq 0 ]
-  # The early return means brew is not invoked at all, not merely shrugged off.
   [ ! -e "$BREW_LOG" ]
   [[ "$output" == ok:* ]]
 }
@@ -172,12 +161,9 @@ STUB
 
   bats_run setup_starship
   [ "$status" -ne 0 ]
-  # brew was reached and its exit propagated, rather than the step bailing earlier.
   grep -qx 'install starship' "$BREW_LOG"
   [[ "$output" != *"starship: installed"* ]]
 }
-
-# --- setup_starship_config -------------------------------------------------
 
 @test "setup_starship_config symlinks starship.toml into ~/.config" {
   starship_env
@@ -186,12 +172,10 @@ STUB
   [ "$status" -eq 0 ]
   [ -L "$HOME/.config/starship.toml" ]
   [ "$(readlink "$HOME/.config/starship.toml")" = "$REPO_DIR/starship/starship.toml" ]
-  # link() has to create ~/.config itself on a fresh machine.
   [ "$(cat "$HOME/.config/starship.toml")" = "# starship config" ]
 }
 
 @test "setup_starship_config does not require starship to be installed" {
-  # Why it is a separate step: the config must land even where brew failed.
   starship_env
   [ ! -x "$STUB_BIN/starship" ]
   [ ! -x "$STUB_BIN/brew" ]
@@ -211,12 +195,6 @@ STUB
   [ ! -e "$HOME/.config/starship.toml" ]
 }
 
-# --- setup_claude / setup_claude_skills ------------------------------------
-#
-# Per-file and per-skill links, because ~/.claude is shared with Claude Code's
-# own state. See test/README.md, "Install strategies".
-
-# Contents are unique per file so a test can prove which source a link resolved to.
 claude_env() {
   export HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "$HOME"
@@ -257,8 +235,8 @@ claude_env() {
     [ "$(readlink "$HOME/.claude/$f")" = "$REPO_DIR/claude/$f" ]
   done
 
-  # The only renamed link: Claude Code demands the name CLAUDE.md, while a
-  # claude/CLAUDE.md here would be read as this repo's project instructions.
+  # The only renamed link: a claude/CLAUDE.md here would be read as this repo's
+  # project instructions.
   [ -L "$HOME/.claude/CLAUDE.md" ]
   [ "$(readlink "$HOME/.claude/CLAUDE.md")" = "$REPO_DIR/claude/global-instructions.md" ]
   [ "$(cat "$HOME/.claude/CLAUDE.md")" = "# global instructions" ]
@@ -271,7 +249,6 @@ claude_env() {
   bats_run setup_claude
   [ "$status" -eq 0 ]
   [ "$(readlink "$HOME/.claude/settings.json")" = "$REPO_DIR/claude/settings.json" ]
-  # A re-run must not back up the symlinks it just made.
   local backups=("$HOME"/.claude/*.backup.*)
   [ ! -e "${backups[0]}" ]
 }
@@ -304,7 +281,6 @@ claude_env() {
   bats_run setup_claude
   [ "$status" -eq 0 ]
   [ -L "$HOME/.claude/settings.json" ]
-  # The user's pre-adoption settings are the only copy anywhere; never destroy them.
   local backup
   backup="$(echo "$HOME"/.claude/settings.json.backup.*)"
   [ "$(cat "$backup")" = '{"model":"sonnet"}' ]
@@ -318,7 +294,6 @@ claude_env() {
 
   local skill
   for skill in bug-fixing clean-code development plan-writing ui-separation; do
-    # Directory links, so a skill's references/ subtree comes along for free.
     [ -L "$HOME/.claude/skills/$skill" ]
     [ "$(readlink "$HOME/.claude/skills/$skill")" = "$REPO_DIR/claude/skills/$skill" ]
     [ "$(cat "$HOME/.claude/skills/$skill/SKILL.md")" = "# $skill" ]
@@ -335,7 +310,6 @@ claude_env() {
   bats_run setup_claude_skills
   [ "$status" -eq 0 ]
 
-  # Untouched on disk, and — the actual assertion — still outside the repo.
   [ -f "$HOME/.claude/skills/.ruby-lsp/Gemfile" ]
   [ ! -L "$HOME/.claude/skills/.ruby-lsp" ]
   [ ! -e "$REPO_DIR/claude/skills/.ruby-lsp" ]
@@ -365,18 +339,12 @@ claude_env() {
   [ -L "$HOME/.claude/skills/ui-separation" ]
 }
 
-# --- setup_claude_vendor ---------------------------------------------------
-#
-# The one directory symlink under ~/.claude: nothing outside this repo writes to
-# ~/.claude/vendor. See test/README.md, "Install strategies".
-
 @test "setup_claude_vendor symlinks the vendor directory itself" {
   claude_env
 
   bats_run setup_claude_vendor
   [ "$status" -eq 0 ]
 
-  # The DIRECTORY is the link, so a second bundle needs no line in setup.sh.
   [ -L "$HOME/.claude/vendor" ]
   [ "$(readlink "$HOME/.claude/vendor")" = "$REPO_DIR/claude/vendor" ]
   [ -f "$HOME/.claude/vendor/mermaid.min.DO-NOT-READ.js" ]
@@ -408,16 +376,12 @@ claude_env() {
   # Existence only -- never read the bundle itself, it is ~750,000 tokens.
   [ -f "$vendor/mermaid.min.DO-NOT-READ.js" ]
   [ -f "$vendor/!READ-ME-FIRST.md" ]
-  # The filename is the warning an agent sees in a path.
   grep -q "DO-NOT-READ" "$vendor/!READ-ME-FIRST.md"
 }
-
-# --- the plan-writing templates --------------------------------------------
 
 @test "UI_TEMPLATE loads mermaid from the vendored bundle, not a CDN or ESM import" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
   # An ESM import fails from file:// and breaks every diagram SILENTLY.
-  # See test/README.md, "The plan-writing templates".
   grep -q 'script src="{{VENDOR_DIR}}/mermaid.min.DO-NOT-READ.js"' "$tpl"
   bats_run grep -q 'cdn.jsdelivr.net' "$tpl"
   [ "$status" -ne 0 ]
@@ -427,7 +391,6 @@ claude_env() {
 
 @test "UI_TEMPLATE substitutes the vendor directory and hardcodes no username" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
-  # Only the DIRECTORY is substituted; the filename stays literal template text.
   grep -q '{{VENDOR_DIR}}' "$tpl"
   bats_run grep -q '/Users/' "$tpl"
   [ "$status" -ne 0 ]
@@ -436,19 +399,16 @@ claude_env() {
 
 @test "plan-writing tells the model to substitute the vendor directory" {
   local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
-  # An unsubstituted {{VENDOR_DIR}} renders diagrams as raw text with no error,
-  # so the instruction must be in the skill, not only in a template comment.
+  # An unsubstituted {{VENDOR_DIR}} renders diagrams as raw text with no error.
   grep -q '{{VENDOR_DIR}}' "$skill"
   grep -q '\.claude/vendor' "$skill"
 }
 
 @test "plan-writing reads as plan-generation instructions, not a rendering step" {
   local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
-  # The old wording made the skill a post-hoc formatter and must not come back.
   bats_run grep -q 'what the plan is written to' "$skill"
   [ "$status" -ne 0 ]
   grep -qi 'not after' "$skill"
-  # And the rule most likely to be dropped on a rewrite.
   grep -q 'chat output is one line' "$skill"
 }
 
@@ -476,8 +436,6 @@ claude_env() {
 
 @test "UI_TEMPLATE shows the task split with a branch name for each task" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
-  # The task split and branches are what the user approves, so they must be in
-  # the browser copy; TODO.md is a bare checklist, not the review surface.
   grep -q '<h2>Tasks</h2>' "$tpl"
   grep -q '<th>Branch</th>' "$tpl"
   grep -q 'feat/retry-policy' "$tpl"
@@ -486,15 +444,10 @@ claude_env() {
 @test "plan-writing requires the plan to state tasks and branch names" {
   local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
   grep -qi 'branch name' "$skill"
-  # And it must hand execution to `development`, not to the old phase-named skill.
   grep -q 'development' "$skill"
   bats_run grep -q 'plan-execution' "$skill"
   [ "$status" -ne 0 ]
 }
-
-# --- the development skill and the to-do list it drives --------------------
-#
-# See test/README.md, "development and TODO.md".
 
 @test "the development skill triggers on doing work, not on executing a plan" {
   local skill="${BATS_TEST_DIRNAME}/../claude/skills/development/SKILL.md"
@@ -506,30 +459,22 @@ claude_env() {
   # the rename fixed, so a plan-execution-only description must fail here.
   [[ "$desc" == *"bug"* ]]
   [[ "$desc" != *"Execute an approved"* ]]
-  # And the steps must be stated to apply with or without a plan.
   grep -qi 'whether or not a plan' "$skill"
 }
 
 @test "the development skill owns the contract the template no longer carries" {
   local skill="${BATS_TEST_DIRNAME}/../claude/skills/development/SKILL.md"
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
-  # `draft pr` swallowed the old commit step, which is how the --no-verify
-  # prohibition gets dropped; pin it to the skill.
   grep -q -- '--no-verify' "$skill"
   grep -qi 'never allowed' "$skill"
-  # A to-do list is a to-do list: the contract prose must not be copied back in.
   bats_run grep -q -- '--no-verify' "$tpl"
   [ "$status" -ne 0 ]
-  # Five is a baseline, not a ceiling.
   grep -qi 'baseline' "$skill"
-  # And a TODO.md, when present, is read and kept current against PLAN.html.
   grep -q 'PLAN.html' "$skill"
 }
 
 @test "TODO_TEMPLATE names the five steps in order, numbered, one per line" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
-  # The user's exact step labels, and what a parser reads: assert the whole
-  # ordered sequence, not merely that the words appear somewhere.
   local want=("1. writing tests" "2. coding" "3. bot review" "4. draft pr" "5. author review")
   local got
   got="$(grep -o '^- \[ \] [0-9]\. .*' "$tpl" | head -5 | sed 's/^- \[ \] //')"
@@ -543,17 +488,15 @@ claude_env() {
 
 @test "TODO_TEMPLATE derives status from checkboxes and declares none" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
-  # A declared status can disagree with the boxes; a derived one cannot. The
-  # patterns target a *declared* status only (a `**Status:**` line or a table
+  # The patterns target a *declared* status only (a `**Status:**` line or a table
   # column) -- the bare word appears legitimately in the header comment.
-  # Negations are bats_run-wrapped, never `! grep` -- see test/README.md.
+  # Negations are bats_run-wrapped, never `! grep`, which never fails a test.
   bats_run grep -qi '^| # | ' "$tpl"
   [ "$status" -ne 0 ]
   bats_run grep -qiE '^[|*[:space:]]*\*?\*?Status\*?\*?[[:space:]]*[:|]' "$tpl"
   [ "$status" -ne 0 ]
   bats_run grep -q '^---$' "$tpl"
   [ "$status" -ne 0 ]
-  # The task's checkbox lives in its heading, in the form a parser depends on.
   grep -q '^## - \[ \] Task 1: ' "$tpl"
   local headings tasks
   headings="$(grep -c '^## - \[ \] Task ' "$tpl")"
@@ -564,24 +507,16 @@ claude_env() {
 
 @test "TODO_TEMPLATE's uniform shape parses without edge cases" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
-  # The rigid shape exists so a script can answer "which task, which step" with
-  # a grep. Prove it.
   local n
   n="$(grep -c '^## - \[[ x]\] Task ' "$tpl")"
   [ "$n" -ge 2 ]
   local steps
   steps="$(grep -c '^- \[[ x]\] [0-9]\+\. ' "$tpl")"
   [ "$steps" -eq $((n * 5)) ]
-  # Each task carries a branch, since that is what the user reviews.
   local branches
   branches="$(grep -c '^\*\*Branch:\*\* ' "$tpl")"
   [ "$branches" -eq "$n" ]
 }
-
-# --- the repo's own tracked files ------------------------------------------
-#
-# setup.sh and zshrc refer to these by path; a rename or a TOML typo would
-# otherwise only surface as a promptless shell on a machine that pulled.
 
 @test "the tracked starship.toml exists and parses" {
   local toml="${BATS_TEST_DIRNAME}/../starship/starship.toml"
@@ -591,7 +526,7 @@ claude_env() {
   fi
 
   # DO NOT reduce this to asserting starship's exit status: it exits 0 on a
-  # broken config and stderr is the only signal. See test/README.md.
+  # broken config and stderr is the only signal.
   local err="${BATS_TEST_TMPDIR}/starship.err"
   STARSHIP_CONFIG="$toml" starship module character >/dev/null 2>"$err"
   [ ! -s "$err" ] || {
@@ -612,7 +547,7 @@ claude_env() {
 @test "claude settings.json points at scripts this repo actually tracks" {
   local settings="${BATS_TEST_DIRNAME}/../claude/settings.json"
   # Renaming a script without editing settings.json leaves Claude Code silently
-  # invoking nothing. The path may be tilde-form or fully expanded.
+  # invoking nothing.
   grep -qE '(~|/Users/[^"]*)/\.claude/scripts/statusline\.sh' "$settings"
   grep -qE '(~|/Users/[^"]*)/\.claude/hooks/block-inefficient-bash\.sh' "$settings"
   grep -qE '(~|/Users/[^"]*)/\.claude/hooks/plan-artifacts-on-exit\.sh' "$settings"
@@ -620,11 +555,6 @@ claude_env() {
   [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/block-inefficient-bash.sh" ]
   [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh" ]
 }
-
-# --- plan-artifacts-on-exit ------------------------------------------------
-#
-# The gate's one real hazard is looping, so the "allow once artifacts exist"
-# branch is the test that matters, not the block. See test/README.md.
 
 plan_hook() {
   printf '{"cwd":"%s","tool_name":"ExitPlanMode"}' "$1" |
@@ -670,7 +600,6 @@ plan_hook() {
   mkdir -p "$scratch"
 
   bats_run plan_hook "$scratch"
-  # No repo means no branch and no PR, so no PR-shaped workflow to force.
   [ "$status" -eq 0 ]
 }
 
@@ -694,8 +623,6 @@ plan_hook() {
 
   bats_run plan_hook "$repo"
   [ "$status" -eq 2 ]
-  # The rule most likely to be ignored: pasting the plan into the terminal too
-  # is the duplication these files exist to remove.
   [[ "$output" == *"ONE LINE"* ]]
   [[ "$output" == *"No summary"* ]]
 }
@@ -707,8 +634,6 @@ plan_hook() {
 
   bats_run plan_hook "$repo"
   [ "$status" -eq 2 ]
-  # "formats and splits" hard-coded the post-hoc-renderer framing into the
-  # wiring; the message must send the model back to the template as an input.
   [[ "$output" == *"while you"* ]]
   [[ "$output" == *"template"* ]]
   [[ "$output" != *"formats and splits"* ]]
@@ -721,8 +646,6 @@ plan_hook() {
 }
 
 @test "every skill setup_claude_skills links has a SKILL.md" {
-  # The names are hardcoded in setup_claude_skills; a rename would otherwise only
-  # surface as a failing step on the next machine setup.
   local skill
   for skill in bug-fixing clean-code development plan-writing ui-separation; do
     [ -f "${BATS_TEST_DIRNAME}/../claude/skills/$skill/SKILL.md" ]
@@ -738,7 +661,6 @@ plan_hook() {
   [ -n "$init" ]
   # Sourcing oh-my-zsh assigns $PROMPT, so an init above it is silently overwritten.
   [ "$init" -gt "$omz" ]
-  # Guarded, or a machine without the binary errors on every shell start.
   grep -q 'command -v starship' "$zshrc"
 }
 
@@ -749,14 +671,13 @@ plan_hook() {
   bats_run grep -qi 'spaceship' "$zshrc"
   [ "$status" -ne 0 ]
   [ ! -e "${BATS_TEST_DIRNAME}/../zsh/spaceship.zsh" ]
-  # agnoster stays: the documented fallback, still linked by setup_zsh.
   [ -f "${BATS_TEST_DIRNAME}/../zsh/agnoster.zsh-theme" ]
 }
 
 @test "statusline writes nothing to stderr" {
   # THE contract: Claude Code discards the entire statusline on a single byte of
   # stderr, with no error shown anywhere. env -i is load-bearing -- an inherited
-  # PATH contains /sbin and hides the failure. See test/README.md.
+  # PATH contains /sbin and hides the failure.
   local script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
   local payload err
   err="${BATS_TEST_TMPDIR}/stderr"
@@ -787,7 +708,7 @@ plan_hook() {
 
 @test "statusline output is valid UTF-8" {
   # A length-based bar loop once sliced the final 3-byte glyph mid-sequence,
-  # because awk's length() counts bytes here. See test/README.md, "Multibyte glyphs".
+  # because awk's length() counts bytes here.
   local script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
   printf '%s' '{"workspace":{"current_dir":"/tmp"}}' |
     env -i PATH=/usr/bin:/bin HOME="$HOME" \
@@ -796,12 +717,8 @@ plan_hook() {
     iconv -f UTF-8 -t UTF-8 >/dev/null
 }
 
-# --- statusline rendering ------------------------------------------------
-
 # COLORTERM is UNSET under env -i unless $3 supplies it: that is the 256-colour
-# fallback path (a plain xterm), "truecolor" is the 24-bit one (ghostty).
-# All three redirects below are load-bearing -- see test/README.md,
-# "Isolation from the developer's machine".
+# fallback path, "truecolor" the 24-bit one. All three redirects are load-bearing.
 statusline_run() { # <columns> <payload> [colorterm]
   printf '%s' "$2" |
     env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS="$1" ${3:+COLORTERM="$3"} \
@@ -811,30 +728,24 @@ statusline_run() { # <columns> <payload> [colorterm]
       "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" 2>/dev/null
 }
 
-# Visible width of one line: SGR stripped, then counted in CHARACTERS with
-# `wc -m` -- awk's length() would bill each 3-byte glyph as 3 columns.
+# Counted in CHARACTERS with `wc -m` -- awk's length() bills each 3-byte glyph as 3.
 line_width() {
   printf '%s' "$1" | sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '
 }
 
-# A transcript yielding an exact token total. The FALLBACK source; see
-# context_window_payload for the primary one.
 make_transcript() { # <tokens> <path>
   printf '{"isSidechain":false,"message":{"usage":{"input_tokens":%d,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}\n' \
     "$1" >"$2"
 }
 
-# The PRIMARY source (Claude Code >= v2.1.251). total_input_tokens excludes
-# output, the same basis the compaction check uses. used_percentage is seeded
-# WRONG on purpose: the script must not read it. See test/README.md.
+# The PRIMARY source. used_percentage is seeded WRONG on purpose: it divides by the
+# raw window, and the script must not read it.
 context_window_payload() { # <total_input_tokens> <context_window_size>
   printf '{"workspace":{"current_dir":"/tmp"},"context_window":{"total_input_tokens":%d,"context_window_size":%d,"used_percentage":99}}' \
     "$1" "$2"
 }
 
 @test "statusline renders two lines and aligns metrics to the bar when content fits" {
-  # 160 columns less the default BAR_MARGIN of 12 leaves a 148-column bar, and
-  # both lines must end on exactly that column -- the point of the PAD computation.
   local out
   out=$(statusline_run 160 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}')
   [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ]
@@ -843,7 +754,6 @@ context_window_payload() { # <total_input_tokens> <context_window_size>
 }
 
 @test "statusline wraps to three lines when the metrics overflow the width" {
-  # A long title in a narrow terminal drives PAD negative: the overflow signal.
   local out
   out=$(statusline_run 90 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"a-fairly-long-session-title-x"}')
   [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 3 ]
@@ -856,14 +766,12 @@ context_window_payload() { # <total_input_tokens> <context_window_size>
   right=$(line_width "$(printf '%s\n' "$out" | sed -n 3p)")
   [ "$bar" -eq 78 ]
   [ "$right" -eq "$bar" ]
-  # Padded on the LEFT, so the line must begin with spaces.
   printf '%s\n' "$out" | sed -n 3p | sed $'s/\033\\[[0-9;]*m//g' | grep -q '^  *[^ ]'
 }
 
 @test "statusline never emits a negative pad when the right group alone overflows" {
-  # printf reads a NEGATIVE "%*s" width as a left-justify flag and emits
-  # nothing, so WRAP_PAD is clamped at 0. Here RIGHT alone overruns the bar,
-  # which is correct, but the line must still be non-empty and unpadded.
+  # printf reads a NEGATIVE "%*s" width as a left-justify flag and emits nothing,
+  # so WRAP_PAD is clamped at 0.
   local out third
   out=$(statusline_run 40 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"a-fairly-long-session-title-x"}')
   third=$(printf '%s\n' "$out" | sed -n 3p)
@@ -872,9 +780,8 @@ context_window_payload() { # <total_input_tokens> <context_window_size>
 }
 
 @test "statusline progress bar fill tracks context percentage" {
-  # At 112 columns the bar is 100 cells, so the filled run equals the
-  # percentage. 100% is 167000 (the usable window), not 200000 -- see
-  # test/README.md, "The context gauge".
+  # At 112 columns the bar is 100 cells, so the filled run equals the percentage.
+  # 100% is 167000 (the usable window), not 200000.
   local t out fill
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
 
@@ -882,15 +789,12 @@ context_window_payload() { # <total_input_tokens> <context_window_size>
     set -- $pair
     make_transcript "$1" "$t"
     out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
-    # Everything before the track colour (grey 238) is the filled run.
     fill=$(printf '%s' "$out" | sed $'s/\033\\[38;5;238m.*//' |
       sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
     [ "$fill" -eq "$2" ]
   done
 }
 
-# The `ctx:N%` reading off the metrics line, read from the rendered output so it
-# pins what the user actually sees.
 ctx_pct() { # <payload> [columns]
   statusline_run "${2:-200}" "$1" |
     sed $'s/\033\\[[0-9;]*m//g' |
@@ -898,8 +802,8 @@ ctx_pct() { # <payload> [columns]
 }
 
 @test "statusline context percentage is scaled to the auto-compact point" {
-  # Asserted on the printed number rather than the bar, so a fill-rounding
-  # change cannot mask it. See test/README.md, "The context gauge".
+  # Asserted on the printed number rather than the bar, so a fill-rounding change
+  # cannot mask it.
   local t
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
 
@@ -924,16 +828,14 @@ ctx_pct() { # <payload> [columns]
 
 @test "statusline falls back to the transcript when context_window is absent" {
   # Older CLIs emit no context_window, and a current one emits null at the very
-  # start of a session. The transcript sum has to keep working for both.
+  # start of a session.
   local t payload
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 83500 "$t"
 
-  # Field absent entirely.
   payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")
   [ "$(ctx_pct "$payload")" -eq 50 ]
 
-  # Present but null, which is the start-of-session shape.
   payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s","context_window":null}' "$t")
   [ "$(ctx_pct "$payload")" -eq 50 ]
 
@@ -943,11 +845,9 @@ ctx_pct() { # <payload> [columns]
 }
 
 @test "statusline scales the context_window payload to the compact point" {
-  # Same rescale, asserted again because the payload path is separate code.
   [ "$(ctx_pct "$(context_window_payload 167000 200000)")" -eq 100 ]
   [ "$(ctx_pct "$(context_window_payload 83500 200000)")" -eq 50 ]
 
-  # The payload's own used_percentage (seeded at 99) must not be what is printed.
   [ "$(ctx_pct "$(context_window_payload 0 200000)")" -eq 0 ]
 }
 
@@ -956,7 +856,6 @@ ctx_pct() { # <payload> [columns]
   # reported 1000000 must be clamped: believing it would render 17, not 100.
   [ "$(ctx_pct "$(context_window_payload 167000 1000000)")" -eq 100 ]
 
-  # The clamp follows CTX_MAX rather than a hardcoded 200000.
   export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/extended.conf"
   cat >"$CLAUDE_CONTEXT_CONF" <<'EOF'
 CTX_MAX=1000000
@@ -973,9 +872,8 @@ EOF
 }
 
 @test "statusline context percentage clamps at 100 past the compact point" {
-  # One large turn can overshoot before compaction fires, so this is a REAL
-  # state. 200000 is a genuine overshoot of the 167000 point -- unclamped it
-  # computes to 120, whereas the compact point itself would pass with no clamp.
+  # 200000 is a genuine overshoot of the 167000 point -- unclamped it computes to
+  # 120, whereas the compact point itself would pass with no clamp.
   local t
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
 
@@ -991,22 +889,18 @@ EOF
   [ "$fill" -eq 100 ]
 }
 
-# Every SGR foreground code in the bar's FILLED run, in order (the track colour
-# 238 onward is cut first). One code per RUN, not per cell. Handles both output
-# formats: "R;G;B" on the truecolor path, the bare cube code on the fallback.
-# grep -o and not sed s///gp -- see test/README.md, "Multibyte glyphs".
+# One code per RUN, not per cell.
 bar_codes() { # <line>
   printf '%s' "$1" | sed $'s/\033\\[38;5;238m.*//' |
     grep -o $'\033\\[38;[25];[0-9;]*m' |
     sed $'s/\033\\[38;5;//;s/\033\\[38;2;//;s/m$//'
 }
 
-# One code per CELL: expand the run-length coalesced escapes by counting the
-# glyphs after each, with `wc -m` and never awk's length().
+# One code per CELL: expands the run-length coalesced escapes. `wc -m`, never
+# awk's length().
 bar_cell_codes() { # <line>
   local filled seg code n
   filled=$(printf '%s' "$1" | sed $'s/\033\\[38;5;238m.*//')
-  # Split on the escape sequences, keeping the code with the run it introduces.
   while IFS= read -r seg; do
     [ -z "$seg" ] && continue
     code=${seg%%:*}
@@ -1022,8 +916,8 @@ bar_cell_codes() { # <line>
     tail -n +2)
 }
 
-# The gradient cell colour, restated rather than imported so a change to the
-# script's stops has to be made deliberately in two places.
+# Restated rather than imported, so changing the script's stops has to be done
+# deliberately in two places.
 expect_cell_rgb() { # <i> <n>
   awk -v i="$1" -v n="$2" 'BEGIN {
     ns = split("0 0.20 0.35 0.55 0.70 0.85 1", sf, " ")
@@ -1040,7 +934,6 @@ expect_cell_rgb() { # <i> <n>
   }'
 }
 
-# The fallback ladder, restated for the same reason.
 expect_cell_cube() { # <i> <n>
   awk -v i="$1" -v n="$2" 'BEGIN {
     nc = split("40 76 112 148 184 220 214 208 202 196 160", cube, " ")
@@ -1050,19 +943,15 @@ expect_cell_cube() { # <i> <n>
 }
 
 @test "statusline progress bar gradient starts green and ends red" {
-  # Colour is a function of POSITION. A solid fill, which this replaced, would
-  # emit one code for the whole run and fail the final assertion.
   local t out codes
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 167000 "$t"
 
-  # Truecolor: the exact endpoint RGBs of the waypoint ramp.
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
   codes=$(bar_codes "$out")
   [ "$(printf '%s\n' "$codes" | sed -n 1p)" = "60;200;70" ]
   [ "$(printf '%s\n' "$codes" | tail -n 1)" = "215;35;35" ]
 
-  # Fallback: the ends of the cube ladder -- 40 is pure green, 160 dark red.
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)
   codes=$(bar_codes "$out")
   [ "$(printf '%s\n' "$codes" | sed -n 1p)" -eq 40 ]
@@ -1090,7 +979,6 @@ expect_cell_cube() { # <i> <n>
       else              { hh = (r - g) / d + 4 }
       printf "%d", hh * 60
     }')
-    # Integer hue, so allow equality; strictly it never rises.
     [ "$h" -le "$prev" ]
     prev=$h
   done
@@ -1107,7 +995,6 @@ expect_cell_cube() { # <i> <n>
   make_transcript 167000 "$t"
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
 
-  # Cell 35 of 100 is the 35% mark.
   cell=$(bar_cell_codes "$out" | sed -n 36p)
   h=$(awk -v s="$cell" 'BEGIN {
     split(s, c, ";"); r = c[1]; g = c[2]; b = c[3]
@@ -1124,15 +1011,13 @@ expect_cell_cube() { # <i> <n>
 }
 
 @test "statusline progress bar gradient has no visible banding" {
-  # The old cube ramp gave SIX colours across the whole bar, one hard jump every
-  # ~17%. Assert both many distinct colours and no step large enough to band.
   local t out n_distinct max_step
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 167000 "$t"
   out=$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" truecolor | sed -n 1p)
 
   n_distinct=$(bar_cell_codes "$out" | sort -u | wc -l | tr -d ' ')
-  # A 100-cell bar; the old implementation managed 6.
+  # The old cube ramp managed 6 across the whole 100-cell bar.
   [ "$n_distinct" -ge 60 ]
 
   max_step=$(bar_cell_codes "$out" | awk -F';' '
@@ -1149,13 +1034,11 @@ expect_cell_cube() { # <i> <n>
 }
 
 @test "statusline progress bar cell colour depends on position not on fill" {
-  # A cell keeps its colour as the bar grows past it, so the shorter bar's
-  # sequence is a prefix of the longer one's. A percentage-keyed fill would not.
   local t half deep
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
 
-  # Fractions of the USABLE window (167000). Both must sit below the compact
-  # point, or the two bars clamp to the same width and cannot be distinguished.
+  # Both must sit below the compact point (167000), or the two bars clamp to the
+  # same width and cannot be distinguished.
   make_transcript 83500 "$t"
   half=$(bar_codes "$(statusline_run 112 "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")" | sed -n 1p)")
   make_transcript 150300 "$t"
@@ -1163,13 +1046,11 @@ expect_cell_cube() { # <i> <n>
 
   [ -n "$half" ]
   [ "$(printf '%s\n' "$half" | wc -l | tr -d ' ')" -lt "$(printf '%s\n' "$deep" | wc -l | tr -d ' ')" ]
-  # The 50% sequence is the leading run of the 90% one.
   [ "$(printf '%s\n' "$deep" | head -n "$(printf '%s\n' "$half" | wc -l | tr -d ' ')")" = "$half" ]
 }
 
 @test "statusline progress bar cell colours match the position formula exactly" {
-  # Pins the interpolation itself, not just its endpoints, against an
-  # independently recomputed ramp. Both paths, because they are different code.
+  # Both paths, because they are different code.
   local t out n cell expected
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 167000 "$t"
@@ -1195,8 +1076,8 @@ expect_cell_cube() { # <i> <n>
 }
 
 @test "statusline progress bar is byte-identical for different directories" {
-  # Proves the bar is not hashed on cwd+branch. The segment background below
-  # must still DIFFER, or the comparison would pass on identical inputs.
+  # The segment background below must still DIFFER, or the comparison would pass
+  # on identical inputs.
   local t a b
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 100000 "$t"
@@ -1222,9 +1103,7 @@ expect_cell_cube() { # <i> <n>
   # not the payload's -- so the segment rendered as nothing at all.
   local out stripped
   out=$(statusline_run 200 '{"workspace":{"current_dir":"/usr"},"session_name":"Refine the statusline"}' | sed -n 2p)
-  # Directory: the block opens with the hashed background then yellow.
   printf '%s' "$out" | grep -q $'^\033\[48;5;[0-9]*m\033\[33m/usr'
-  # Task: the separator re-asserts yellow, and the title text is on the line.
   printf '%s' "$out" | grep -q $'\033\[33m | Refine the statusline'
   stripped=$(printf '%s' "$out" | sed $'s/\033\\[[0-9;]*m//g')
   case "$stripped" in *"Refine the statusline"*) ;; *) return 1 ;; esac
@@ -1232,7 +1111,7 @@ expect_cell_cube() { # <i> <n>
 
 @test "statusline branch is green on a clean tree and yellow on every kind of dirt" {
   # agnoster's rule: dirty is ANY uncommitted change, but an unpushed commit is
-  # not dirt. One throwaway repo per case so none can mask another.
+  # not dirt.
   local repo out
   branch_fg() { # <dir>
     statusline_run 200 "$(printf '{"workspace":{"current_dir":"%s"}}' "$1")" |
@@ -1247,16 +1126,13 @@ expect_cell_cube() { # <i> <n>
     git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m init
   }
 
-  # Clean: green.
   new_repo clean
   [ "$(branch_fg "$repo")" = "32" ]
 
-  # Unstaged edit to a tracked file: yellow.
   new_repo unstaged
   echo changed >"$repo/tracked.txt"
   [ "$(branch_fg "$repo")" = "33" ]
 
-  # Staged-only edit, working tree matching the index: yellow.
   new_repo staged
   echo changed >"$repo/tracked.txt"
   git -C "$repo" add tracked.txt
@@ -1267,8 +1143,8 @@ expect_cell_cube() { # <i> <n>
   echo new >"$repo/brand-new.txt"
   [ "$(branch_fg "$repo")" = "33" ]
 
-  # An unpushed COMMIT is not dirt: without this the test would pass for a check
-  # that merely compared against a remote.
+  # Without this the test would pass for a check that merely compared against a
+  # remote.
   new_repo unpushed
   echo more >>"$repo/tracked.txt"
   git -C "$repo" add tracked.txt
@@ -1279,8 +1155,7 @@ expect_cell_cube() { # <i> <n>
 @test "every PALETTE background clears the contrast threshold against yellow and green" {
   # The foregrounds are the TERMINAL THEME's yellow and green, NOT xterm's
   # defaults -- scoring xterm's is how seven illegible entries once passed a
-  # contrast filter. See test/README.md, "Contrast is scored against the
-  # terminal theme's real foregrounds". Bar is 3.0 (WCAG AA, large text).
+  # contrast filter. Bar is 3.0 (WCAG AA, large text).
   local script codes
   script="${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh"
   codes=$(sed -n 's/^SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' "$script")
@@ -1295,7 +1170,6 @@ expect_cell_cube() { # <i> <n>
     function ratio(a, b) { return (a > b) ? (a + 0.05) / (b + 0.05) : (b + 0.05) / (a + 0.05) }
     BEGIN {
       split("0 95 135 175 215 255", lv, " ")
-      # SGR 33 and 32 as ghostty "deep" renders them, NOT the xterm defaults.
       # No apostrophes in this single-quoted awk program -- one truncates the
       # file and bats then reports FEWER TESTS rather than an error.
       ly = lum(217, 189, 38)  # #d9bd26, SGR 33
@@ -1325,7 +1199,7 @@ expect_cell_cube() { # <i> <n>
 @test "adjacent PALETTE entries are visually distinct" {
   # Assignment walks the palette in order, so neighbours go to sessions opened
   # close together and must be the LEAST alike pairs. The list is cyclic, so the
-  # last->first pair is checked too. See test/README.md, "Ordering is load-bearing".
+  # last->first pair is checked too.
   local script codes
   script="${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh"
   codes=$(sed -n 's/^SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' "$script")
@@ -1334,7 +1208,6 @@ expect_cell_cube() { # <i> <n>
   printf '%s\n' "$codes" | awk '
     function srgb(u) { u /= 255; return (u <= 0.04045) ? u/12.92 : ((u+0.055)/1.055)^2.4 }
     function f(t) { return (t > 216/24389) ? t^(1/3) : (841/108)*t + 4/29 }
-    # sRGB -> CIE Lab (D65), then CIE76 Euclidean distance.
     function lab(c,   n, r, g, b, X, Y, Z, fx, fy, fz) {
       # 0-15 are system colours, not cube entries -- see the contrast test.
       if (c < 16) { r = g = b = 0 }
@@ -1366,7 +1239,7 @@ expect_cell_cube() { # <i> <n>
 @test "statusline segment background is closed before the metrics that follow" {
   # Asserting that no background is open at END of line is vacuous -- the right
   # group ends with its own reset. So walk the line and collect every PAINTED
-  # character instead. See test/README.md, "Segments".
+  # character instead.
   local out painted
   out=$(statusline_run 160 '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"customTitle":"demo"}')
   painted=$(printf '%s\n' "$out" | sed -n 2p | awk '
@@ -1385,14 +1258,11 @@ expect_cell_cube() { # <i> <n>
       }
       print acc
     }')
-  # Exactly the dir + task block; a bled background would also paint the pad
-  # spaces and the whole right-hand group.
+  # A bled background would also paint the pad spaces and the right-hand group.
   [ "$painted" = "/tmp | demo" ]
 }
 
 @test "statusline omits absent branch and task without a stray coloured gap" {
-  # /usr is not a checkout and there is no title, so the block must end right
-  # after the directory; a separator for an absent segment would paint past it.
   local out stripped
   out=$(statusline_run 160 '{"workspace":{"current_dir":"/usr"}}' | sed -n 2p)
   # Cut at the FIRST reset: sed is greedy and would otherwise run to the last
@@ -1403,11 +1273,6 @@ expect_cell_cube() { # <i> <n>
   [ "$stripped" = "/usr" ]
 }
 
-# --- session colours -------------------------------------------------------
-#
-# The dir/branch/task background is RECORDED, not derived: assigned once and
-# kept. Permanence is the feature. See test/README.md, "Session colours".
-
 colors_env() {
   export STATUSLINE_CONF=/nonexistent
   export STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}/colors.db"
@@ -1415,7 +1280,6 @@ colors_env() {
   . "${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh"
 }
 
-# Age every row by N days, to exercise retention without waiting.
 age_rows() { # <days>
   sqlite3 "$STATUSLINE_COLOR_DB" \
     "UPDATE colors SET created_at = strftime('%s','now') - $1 * 86400;"
@@ -1434,7 +1298,6 @@ age_rows() { # <days>
     got="$got $(session_color_assign "/dir$i" main)"
   done
 
-  # The first n are the palette in its declared order; the rest wrap to the front.
   want=$(printf ' %s' "${SESSION_COLOR_PALETTE[@]}" \
     "${SESSION_COLOR_PALETTE[0]}" "${SESSION_COLOR_PALETTE[1]}")
   [ "$got" = "$want" ]
@@ -1446,7 +1309,6 @@ age_rows() { # <days>
   local first
   first=$(session_color_assign /stable main)
 
-  # Exhaust the palette and force duplicates.
   local i
   for i in $(seq 1 20); do session_color_assign "/other$i" main >/dev/null; done
 
@@ -1487,8 +1349,7 @@ age_rows() { # <days>
   colors_env
 
   # These two keys concatenate to the same string, so without a separator they
-  # collapse into one row. (The pair matters: "/a/b"+"c" vs "/a"+"bc" does not
-  # collide, because the slash keeps them distinct.)
+  # collapse into one row.
   session_color_assign /a/b c >/dev/null
   session_color_assign /a/bc "" >/dev/null
 
@@ -1498,7 +1359,6 @@ age_rows() { # <days>
 @test "session_color reads without assigning" {
   colors_env
 
-  # A shell must be able to ask for a colour without claiming one.
   local out
   out=$(session_color /never/seen main)
   [ -z "$out" ]
@@ -1563,7 +1423,6 @@ age_rows() { # <days>
 @test "concurrent assigns of one key produce one row and no stderr" {
   colors_env
 
-  # Two sessions racing to claim the same new key must settle to a single row.
   local err="${BATS_TEST_TMPDIR}/err"
   : >"$err"
 
@@ -1582,14 +1441,12 @@ age_rows() { # <days>
 
   # THE regression test for INSERT OR IGNORE: OR REPLACE lets the loser repaint
   # a live session mid-work. Reproduced by stubbing the fast-path lookup to
-  # return nothing, which is what the loser observes. Driving the library rather
-  # than restating its SQL is deliberate. See test/README.md, "Concurrency".
+  # return nothing, which is what the loser observes.
   session_color_assign /a main >/dev/null
   local first
   first=$(session_color /a main)
   [ -n "$first" ]
 
-  # Same copy-the-body idiom the suite uses for setup.sh's shadowed run().
   eval "_sc_real_sql() $(declare -f _sc_sql | tail -n +2)"
   _sc_sql() {
     case "$1" in
@@ -1612,10 +1469,6 @@ age_rows() { # <days>
   # THE regression test for PRAGMA busy_timeout. It asserts on ROWS, not on
   # stderr: without the pragma sqlite3 abandons a locked write SILENTLY (13 of
   # 24 rows, zero stderr), so a stderr-only assertion passes vacuously.
-  # Writers are waited on per-PID so a dead writer is distinguishable from a
-  # lost row. A FIFO barrier was tried and rejected; busy_timeout exhaustion was
-  # ruled out by measurement. See test/README.md, "Concurrency", before changing
-  # any of this.
   local err="${BATS_TEST_TMPDIR}/err"
   : >"$err"
 
@@ -1629,7 +1482,6 @@ age_rows() { # <days>
   for pid in "${pids[@]}"; do
     wait "$pid" || failed=$((failed + 1))
   done
-  # session_color_assign returns 0 on every path it takes here.
   [ "$failed" -eq 0 ]
 
   [ "$(sqlite3 "$STATUSLINE_COLOR_DB" 'SELECT COUNT(*) FROM colors;')" -eq 24 ]
@@ -1639,8 +1491,8 @@ age_rows() { # <days>
 @test "the library is silent when sqlite3 is unavailable" {
   colors_env
 
-  # Degrade to "no colour", never to a broken statusline. A non-zero return is
-  # expected -- the caller falls back to hashing -- hence the || true.
+  # A non-zero return is expected -- the caller falls back to hashing -- hence
+  # the || true.
   local err="${BATS_TEST_TMPDIR}/err" out
   out=$(PATH=/nonexistent session_color_assign /x main 2>"$err") || true
 
@@ -1649,7 +1501,6 @@ age_rows() { # <days>
 }
 
 @test "the statusline falls back to hashing when the library is missing" {
-  # SESSION_COLORS_LIB points nowhere: the segment must still be painted.
   local out
   out=$(printf '%s' '{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}' |
     env -i PATH=/usr/bin:/bin HOME="$HOME" COLUMNS=160 \
@@ -1661,8 +1512,6 @@ age_rows() { # <days>
 }
 
 @test "the palette is defined in exactly one place" {
-  # A second copy could drift into handing out colours the contrast audit never
-  # covered; a re-introduced list is the regression. See test/README.md.
   local script
   script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
 
@@ -1681,7 +1530,6 @@ age_rows() { # <days>
 }
 
 @test "the statusline falls back to a usable palette when the library is unreadable" {
-  # A broken install should degrade to fewer colours, never illegible ones.
   local codes
   codes=$(sed -n 's/^  SESSION_COLOR_PALETTE=(\(.*\))$/\1/p' \
     "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh")
@@ -1716,9 +1564,8 @@ age_rows() { # <days>
 }
 
 @test "the test suite never writes to the real colour database" {
-  # Rendering tests once assigned colours in the developer's LIVE database (129
-  # dead rows accumulated). Assert on the FIXTURE, not the live file: diffing
-  # the real database would pass vacuously on a machine that has none.
+  # Assert on the FIXTURE, not the live file: diffing the real database would
+  # pass vacuously on a machine that has none.
   local fixture
   fixture=$(sed -n '/^statusline_run() {/,/^}/p' "${BATS_TEST_DIRNAME}/setup.bats")
 
@@ -1730,7 +1577,6 @@ age_rows() { # <days>
   [ "$db" -ge 1 ]
   [ "$conf" -ge 1 ]
 
-  # And the redirect must point inside the test tmpdir, not at a fixed path.
   printf '%s' "$fixture" | grep -q 'STATUSLINE_COLOR_DB="${BATS_TEST_TMPDIR}'
 }
 
@@ -1767,15 +1613,12 @@ EOF
 }
 
 @test "a missing or unreadable context-window.conf still renders a statusline" {
-  # "Absence must be a working state": both cases fall through to the inline
-  # defaults, where 83500 is half the 167000 usable window.
   local t out
   t="${BATS_TEST_TMPDIR}/transcript.jsonl"
   make_transcript 83500 "$t"
   local payload
   payload=$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")
 
-  # Absent.
   export CLAUDE_CONTEXT_CONF="${BATS_TEST_TMPDIR}/does-not-exist.conf"
   [ "$(ctx_pct "$payload")" -eq 50 ]
 
@@ -1788,7 +1631,7 @@ EOF
     [ "$(ctx_pct "$payload")" -eq 50 ]
   fi
 
-  # And the line must be whole, not merely non-empty.
+  # The line must be whole, not merely non-empty.
   out=$(statusline_run 160 "$payload")
   [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ]
 }
@@ -1806,7 +1649,6 @@ CTX_MAX=lots
 CTX_RESERVE=-5
 EOF
 
-  # Both fall back, so this is the default 167000-usable scale again.
   [ "$(ctx_pct "$(printf '{"workspace":{"current_dir":"/tmp"},"transcript_path":"%s"}' "$t")")" -eq 50 ]
 }
 

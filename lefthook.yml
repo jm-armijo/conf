@@ -1,5 +1,3 @@
-# Pre-commit gate. Rationale: see README "Committing".
-
 pre-commit:
   parallel: true
   commands:
@@ -9,10 +7,9 @@ pre-commit:
 
     shfmt:
       glob: "*.sh"
-      # -d fails on a diff instead of rewriting, so a commit is never silently reformatted.
+      # Without -d, shfmt prints the formatted file and exits 0: the gate passes silently.
       run: shfmt -d -i 2 -ci {staged_files}
 
-    # Globs are deliberately wider than the files the suite reads, and the trailing
     # "**" is NOT interchangeable with "**/*" -- see README "Pre-commit scoping".
     tests:
       glob:
@@ -23,8 +20,7 @@ pre-commit:
         - "test/**"
       run: bats test/
 
-    # A truncated .bats file defines fewer tests and still exits 0 -- see README
-    # "Why the test count has a floor". Raise the floor when tests are added.
+    # A truncated .bats file defines fewer tests and still exits 0.
     test-count:
       glob: "test/**"
       run: |
