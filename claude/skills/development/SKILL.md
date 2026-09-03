@@ -28,6 +28,26 @@ review clears.
 **Branch creation is implicit**, not a step: cut the task's branch as work on it
 begins. Where a plan exists, it names the branch.
 
+## A task is too big when the PR is too big
+
+The upper bound is what a human can actually review in one sitting. **A PR
+touching more than ~15 files, or more than a few hundred changed lines, is too
+big** — split it. This bound binds harder than the "worth a PR on its own"
+floor above: when the two pull against each other, the ceiling wins and the
+work splits.
+
+Size is judged **before** work starts, while planning the split, not discovered
+at `draft pr` when the diff is already written. If a task turns out mid-flight
+to be heading past the bound, stop and re-split rather than pushing through.
+
+Entangled tests are **not** a reason to merge tasks into one. The failure mode
+this rule exists to catch: three separate concerns land in one commit because
+one test file happened to carry assertions for all three, producing a 33-file
+PR that no reviewer can hold in their head. Split the test file along the same
+seam as the code, and land each piece with the change it covers. Every commit
+must be independently green, but that is satisfied by splitting the tests too —
+not by giving up and shipping one large commit.
+
 ## The five steps
 
 Every task runs all five, in order. These are the step names — use them
@@ -82,7 +102,87 @@ PR cannot exist without a commit and a push behind it.
 ### 5. author review
 
 🛑 **HARD STOP.** The work is **blocked** on the author's review of the draft PR
-in the browser. Watch for review comments and address them as they land.
+in the browser.
+
+**Poll the PR for comments; do not wait to be told.** Review feedback arrives on
+GitHub, not in the chat, so nothing surfaces it unless you go and look. Check
+regularly for the whole duration of this step:
+
+```bash
+gh pr view --json reviews,comments --jq '{reviews: .reviews, comments: .comments}'
+gh api "repos/{owner}/{repo}/pulls/$(gh pr view --json number --jq .number)/comments"
+```
+
+The second call is the one that matters: `gh pr view` misses **inline
+review comments left on specific lines**, which is where most substantive
+feedback lands. Poll both.
+
+**The PR is where the conversation happens, not the chat.** Review is an
+engineering conversation and it belongs in the tracked artifact: someone reading
+the PR a year from now should see the feedback, the reasoning, and the decision
+without needing a terminal transcript that no longer exists. So reply **on
+GitHub**, not in the chat.
+
+The loop is:
+
+1. The author comments.
+2. You reply on the PR — what you will change, or why you think otherwise.
+3. You keep polling.
+4. The author signals:
+   - **👍 reaction** — approval of the approach in your reply. Proceed with it.
+     No further reply needed; just do it.
+   - **A written reply** — read it and act on what it says. It may be a
+     direction to follow, or the next turn of an ongoing discussion. Keep
+     iterating on the thread until it settles.
+   - **Nothing yet** — keep polling. Silence is not consent.
+
+Reactions live on a **different endpoint from comments** and are invisible to
+`gh pr view`, so poll them explicitly or you will miss every 👍:
+
+```bash
+# issue-level comments
+gh api "repos/{owner}/{repo}/issues/comments/<comment-id>/reactions"
+# inline review comments
+gh api "repos/{owner}/{repo}/pulls/comments/<comment-id>/reactions"
+```
+
+Reply mechanics: `gh pr comment <n> --body-file <file>` for a PR-level comment,
+and `gh api "repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies" -f
+body=...` to reply inside an inline thread rather than starting a new one.
+
+**Sign every comment you post.** `gh` authenticates as the user, so GitHub
+attributes your comments to *them* — without a marker the thread reads as the
+author talking to themselves, and the review record loses who actually said
+what. Open every comment you write with:
+
+```markdown
+> 🤖 **Claude** · posted via `gh` as @<the user>
+```
+
+This is not decoration and must not be removed as noise: it is the only thing
+distinguishing your voice from the author's in a thread where the API reports
+one identity for both. It survives quoting, and it is greppable when auditing
+the history later.
+
+If the repo has a GitHub App or a bot account with its own token, use that
+instead and drop the marker — real attribution beats a convention. Do not
+create such an identity yourself; that is the user's to provision.
+
+Track the comment IDs you post. When polling, skip them — otherwise you will
+read your own replies back as new feedback and answer yourself.
+
+Address each comment as it lands — fix it, push to the same branch, and reply on
+the thread saying what changed. Do not batch a pile of fixes silently, and do not
+mark anything resolved that you have not actually fixed. Comments that are
+questions get answered; comments you disagree with get a reasoned reply rather
+than silent compliance or silent refusal.
+
+**Escalate to the chat only when the work is genuinely blocked** — an
+authorization you cannot infer, or a decision where proceeding either way risks
+wasted work. Everything else, including disagreement, goes on the PR.
+
+Keep polling until the step ends: the PR is marked ready for review, or the user
+explicitly says to move on.
 
 The step ends when the PR is marked ready for review, or the user explicitly
 says to move on. A gate, not a formality — no "proceeding while you look", and
