@@ -124,8 +124,8 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
-# Per-file links, never a link of ~/.claude itself: that directory is shared with
-# Claude Code's own runtime state. The CLAUDE.md rename is required by Claude Code.
+# Per-file links, never a link of ~/.claude itself: Claude Code keeps its own
+# runtime state there.
 setup_claude() {
   link "$REPO_DIR/claude/global-instructions.md" "$HOME/.claude/CLAUDE.md" || return 1
   link "$REPO_DIR/claude/settings.json" "$HOME/.claude/settings.json" || return 1
@@ -137,15 +137,13 @@ setup_claude() {
   link "$REPO_DIR/claude/hooks/plan-artifacts-on-exit.sh" "$HOME/.claude/hooks/plan-artifacts-on-exit.sh" || return 1
 }
 
-# The exception to setup_claude's per-file rule: nothing outside this repo writes
-# to ~/.claude/vendor, so one directory link is safe and a second bundle needs no
-# line here.
+# Nothing outside this repo writes to ~/.claude/vendor, so one directory link is safe.
 setup_claude_vendor() {
   link "$REPO_DIR/claude/vendor" "$HOME/.claude/vendor"
 }
 
 # One link per skill, never a link of ~/.claude/skills: Claude Code's plugins write
-# their own state there. Do not glob the list — the explicit opt-in is the point.
+# their own state there. The list is explicit on purpose; do not glob it.
 setup_claude_skills() {
   local skill status=0
   for skill in bug-fixing clean-code development plan-writing ui-separation; do
