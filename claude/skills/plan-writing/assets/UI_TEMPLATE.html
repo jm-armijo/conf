@@ -272,31 +272,16 @@
 
 </div>
 
-<!-- Mermaid Initialization.
-     Vendored, classic <script src> build - NOT an ESM import and NOT a CDN URL.
-     PLAN.html is opened from file://, where a module import fails ("Failed to
-     fetch dynamically imported module") even for a local file, and a CDN may be
-     unreachable offline. Verified in headless Chrome, both directions.
+<!-- Mermaid: vendored classic <script src>. An ESM import or CDN URL fails
+     from file:// and every diagram then renders as raw text, silently.
 
-     SUBSTITUTE {{VENDOR_DIR}} when writing PLAN.html — the DIRECTORY only,
-     with $HOME expanded to a real absolute path:
-
-         printf '%s/.claude/vendor' "$HOME"
-
-     Absolute and expanded, because PLAN.html is written into whatever repo is
-     being planned in — a relative path cannot resolve, and HTML does not expand
-     `~`. Left unsubstituted it fails SILENTLY: every diagram renders as raw
-     text with no console error.
-
-     The filename after the placeholder is fixed template text. Do not turn it
-     into a substituted value. See ~/.claude/vendor/!READ-ME-FIRST.md. -->
-<!-- AGENT / LLM: do NOT read, open, cat, Read, grep or inspect the file
-     referenced below. It is a ~3.4MB minified vendor bundle (~750,000 tokens)
-     and will destroy your context. It is build output, not source, and is never
-     edited by hand. Reference it by PATH ONLY: resolve {{VENDOR_DIR}} to a
-     directory and stop there - do not stat, list, glob or verify the file
-     itself. Copy this comment into PLAN.html with the tag; it is not
-     boilerplate. -->
+     Substitute {{VENDOR_DIR}} with an absolute directory - `printf '%s/.claude/vendor' "$HOME"` -
+     since HTML does not expand `~`. The filename stays literal.
+     See ~/.claude/vendor/!READ-ME-FIRST.md. -->
+<!-- AGENT / LLM: do NOT read, open, cat, Read or grep the file below. It is a
+     ~3.4MB minified bundle (~750,000 tokens) and will destroy your context.
+     Resolve {{VENDOR_DIR}} to a directory and stop - do not stat or verify the
+     file. Copy this comment into PLAN.html with the tag. -->
 <script src="{{VENDOR_DIR}}/mermaid.min.DO-NOT-READ.js"></script>
 <script>
   mermaid.initialize({
