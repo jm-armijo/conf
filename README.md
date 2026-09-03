@@ -488,7 +488,17 @@ directory symlink under `~/.claude`, because nothing but this repo writes there.
 > **Do not open `claude/vendor/mermaid.min.DO-NOT-READ.js`.** It is 3.4MB of
 > minified build output — roughly 750,000 tokens, several times an LLM context
 > window. Reference it by path only; a version bump is a re-download, never a
-> hand-edit. `claude/vendor/!READ-ME-FIRST.md` has the command.
+> hand-edit.
+
+Bumping the version is a re-download, never a hand-edit:
+
+```bash
+curl -sSL -o claude/vendor/mermaid.min.DO-NOT-READ.js \
+  https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
+```
+
+Then re-prepend the agent guard comment to line 1 — a fresh download strips it —
+and check a diagram still renders from `file://`.
 
 It must load as a classic `<script src>`: from `file://` an ESM `import` fails
 even for a local file, and reverting to one breaks every diagram silently. A
