@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ⛔ Never open `claude/vendor/mermaid.min.DO-NOT-READ.js`
+## ⛔ Never open `claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js`
 
 Do not `Read`, `cat`, `head`, `tail`, `grep`, `sed` or glob it, and never run a recursive search across `claude/` without `--exclude-dir=vendor`. It is a 3.4MB minified third-party bundle — roughly **750,000 tokens**, several times a context window — and reading it teaches nothing, because it is build output, not source. It is never hand-edited; a version bump is a re-download, documented under "Vendored bundles" in `README.md`.
 

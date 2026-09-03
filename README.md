@@ -485,7 +485,7 @@ mv ~/.claude/skills/<name> claude/skills/<name>   # move the real dir into the r
 `file://` — currently just Mermaid 11, the diagram renderer. It is the one
 directory symlink under `~/.claude`, because nothing but this repo writes there.
 
-> **Do not open `claude/vendor/mermaid.min.DO-NOT-READ.js`.** It is 3.4MB of
+> **Do not open `claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js`.** It is 3.4MB of
 > minified build output — roughly 750,000 tokens, several times an LLM context
 > window. Reference it by path only; a version bump is a re-download, never a
 > hand-edit.
@@ -493,7 +493,7 @@ directory symlink under `~/.claude`, because nothing but this repo writes there.
 Bumping the version is a re-download, never a hand-edit:
 
 ```bash
-curl -sSL -o claude/vendor/mermaid.min.DO-NOT-READ.js \
+curl -sSL -o claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js \
   https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
 ```
 

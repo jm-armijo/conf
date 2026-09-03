@@ -212,7 +212,7 @@ claude_env() {
 
   # A stand-in for the 3.4MB bundle: the tests must never copy or read the real one.
   mkdir -p "$REPO_DIR/claude/vendor"
-  echo "// not the real bundle" >"$REPO_DIR/claude/vendor/mermaid.min.DO-NOT-READ.js"
+  echo "// not the real bundle" >"$REPO_DIR/claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js"
 
   local skill
   for skill in bug-fixing clean-code development plan-writing ui-separation; do
@@ -347,7 +347,7 @@ claude_env() {
 
   [ -L "$HOME/.claude/vendor" ]
   [ "$(readlink "$HOME/.claude/vendor")" = "$REPO_DIR/claude/vendor" ]
-  [ -f "$HOME/.claude/vendor/mermaid.min.DO-NOT-READ.js" ]
+  [ -f "$HOME/.claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js" ]
 }
 
 @test "setup_claude_vendor is idempotent" {
@@ -374,7 +374,7 @@ claude_env() {
 @test "the vendored mermaid bundle is tracked and carries its do-not-read note" {
   local vendor="${BATS_TEST_DIRNAME}/../claude/vendor"
   # Existence only -- never read the bundle itself, it is ~750,000 tokens.
-  [ -f "$vendor/mermaid.min.DO-NOT-READ.js" ]
+  [ -f "$vendor/mermaid.min.BOTS-DO-NOT-READ.js" ]
   [ -f "$vendor/!READ-ME-FIRST.md" ]
   grep -q "DO-NOT-READ" "$vendor/!READ-ME-FIRST.md"
 }
@@ -382,7 +382,7 @@ claude_env() {
 @test "UI_TEMPLATE loads mermaid from the vendored bundle, not a CDN or ESM import" {
   local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
   # An ESM import fails from file:// and breaks every diagram SILENTLY.
-  grep -q 'script src="{{VENDOR_DIR}}/mermaid.min.DO-NOT-READ.js"' "$tpl"
+  grep -q 'script src="{{VENDOR_DIR}}/mermaid.min.BOTS-DO-NOT-READ.js"' "$tpl"
   bats_run grep -q 'cdn.jsdelivr.net' "$tpl"
   [ "$status" -ne 0 ]
   bats_run grep -q 'type="module"' "$tpl"
@@ -394,7 +394,7 @@ claude_env() {
   grep -q '{{VENDOR_DIR}}' "$tpl"
   bats_run grep -q '/Users/' "$tpl"
   [ "$status" -ne 0 ]
-  grep -q 'mermaid.min.DO-NOT-READ.js' "$tpl"
+  grep -q 'mermaid.min.BOTS-DO-NOT-READ.js' "$tpl"
 }
 
 @test "plan-writing tells the model to substitute the vendor directory" {
