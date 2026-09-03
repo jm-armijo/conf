@@ -28,6 +28,8 @@ Because these are symlinks, any later edit to your live config is saved straight
 
 Existing files are backed up (renamed with a `.backup.<timestamp>` suffix) before being replaced. The script is idempotent — safe to re-run.
 
+Every step runs through `run()`, which **records a failure and carries on** rather than aborting (`set -uo pipefail`, deliberately no `-e`). One broken step never blocks the rest; the script lists what failed at the end and exits non-zero. Each app's install strategy — file symlink, directory symlink, `defaults import`, or package manager — is chosen from how that app writes to its own files, and the per-app sections below give the reasoning.
+
 After running, restart your shell (`exec zsh`).
 
 ### Prerequisites
@@ -553,6 +555,13 @@ per file or per skill. Nothing but this repo writes to `~/.claude/vendor`, so th
 whole directory is ours — one link covers it, and a second bundle needs no change
 to `setup.sh`.
 
+It is its own `run()` step rather than a line inside `setup_claude`, so a machine
+where the link fails still gets `settings.json`, the statusline and the hooks — a
+plan just renders without its diagram. `setup_claude_skills` is split out for the
+same reason, and it also records failures across its loop (`status=1`) instead of
+returning on the first one, so a single renamed skill does not silently skip the
+rest.
+
 **It has to be a classic `<script src>`, not an ESM `import`.** `PLAN.html` is
 opened from `file://`, where a module import fails with *"Failed to fetch
 dynamically imported module"* even for a local file — module fetches go through
@@ -670,3 +679,65 @@ three tools — without them commits fail:
 brew install lefthook shellcheck shfmt bats-core
 lefthook install
 ```
+
+`setup.sh` is the only executable here and it runs against a real `$HOME` — `link()`
+moves existing dotfiles aside. A bug reaches the machine the moment it is run, and
+there is no CI, so the checks live on the commit itself. Nothing is softened with
+`|| true`: a check that cannot fail cannot protect anything.
+
+### Pre-commit scoping
+
+The `tests` command is globbed rather than run unconditionally. The paths come from
+every `${BATS_TEST_DIRNAME}/../` reference in `test/setup.bats` — `setup.sh`,
+`claude/**`, `zsh/**`, `starship/**` and `test/**` — so a commit touching only
+config data no test reads (`obs/`, `ghostty/`, `git/`, `magnet/`, `bash/`, `tmux/`,
+`vim/`, the markdown docs) skips the ~15s run.
+
+The globs are deliberately **wider** than the exact file list, because the suite
+asserts on *absence* too. `[ ! -e zsh/spaceship.zsh ]` only starts failing once that
+file comes back, and a file-level glob would never fire on the commit that added it;
+the same reasoning covers `claude/**`, where the skills test walks a hardcoded list
+of directories, so a new or renamed skill has to trigger the suite. A false negative
+is a broken machine setup landing green; a false positive is 15 seconds.
+
+**The trailing `**` is load-bearing and is NOT interchangeable with `**/*`.** The
+latter requires at least one intermediate directory, so it matches
+`claude/lib/session-colors.sh` but silently **misses** `claude/settings.json`.
+Verified against lefthook 1.12.2 — the first draft of this scoping used `**/*` and
+skipped the whole suite on a `claude/statusline.conf` commit.
+
+### Why the test count has a floor
+
+A truncated `.bats` file does not fail — it silently **defines fewer tests** and the
+suite still exits 0. Hit for real: an apostrophe inside a single-quoted awk program
+closed the quote and took the rest of the file with it, dropping the count from 66
+to 45 on a green run. So `test-count` asserts a floor on `bats test/ --count` as
+well as on the result; raise it when tests are added. It only has to be tight enough
+to catch a file that stopped parsing partway through.
+
+It is scoped tighter than `tests` (`test/**` only) because nothing outside `test/`
+can change how many tests bats parses.
+
+### The plan-mode gate
+
+`claude/hooks/plan-artifacts-on-exit.sh` is what makes plan mode emit `PLAN.html`
+and `TODO.md` without the `plan-writing` skill being named. Left alone the plan dies
+in the terminal as a wall of summary text, and invoking the skill by name is the
+thing that kept being forgotten — so the exit itself is the trigger: block the first
+`ExitPlanMode`, point the model at the skill, let the retry through. Blocking at the
+exit is a late trigger for an early instruction, which is why the message sends the
+model back to the template rather than asking it to reformat what it has.
+
+**`PreToolUse` is the load-bearing part.** It runs *before* the tool does, so the
+block lands before the approval prompt is ever drawn: by the time the user is asked
+to approve, `PLAN.html` exists, is open in their browser, and the plan is still
+editable. A `PostToolUse` hook would render the plan at the instant it stopped being
+reviewable.
+
+The hook contract is exit 2 to block (stderr is fed back to the model) and exit 0 to
+allow. It must fire **once per plan**, so it re-blocks only while the artifacts are
+missing — without that check it would block its own retry and plan mode would be
+inescapable. It also exits 0 for a non-git `cwd` (a scratch directory has no branch
+or PR to hang tasks off) and fails open on malformed input. `cwd` comes from the
+hook payload, never `$PWD`, which is the hook's own directory rather than the
+session's. Kept POSIX-ish on purpose — macOS `/bin/bash` is 3.2.

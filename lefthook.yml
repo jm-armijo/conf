@@ -1,53 +1,19 @@
-# Pre-commit gate for this repo.
-#
-# setup.sh is the only executable here and it runs against a real $HOME — link()
-# moves existing dotfiles aside. A bug reaches the machine the moment it's run,
-# and there's no CI to catch it, so the checks live on the commit itself.
-#
-# Nothing here is softened with `|| true`: a check that can't fail can't protect
-# anything.
+# Pre-commit gate. Rationale: see README "Committing".
 
 pre-commit:
   parallel: true
   commands:
-    # Correctness: catches quoting, unset-variable and exit-status bugs that
-    # only show up on the one machine you're setting up.
     shellcheck:
       glob: "*.sh"
       run: shellcheck {staged_files}
 
-    # Consistency: 2-space indent with switch/select cases indented, matching
-    # the existing style in setup.sh. -d fails on a diff instead of rewriting,
-    # so the commit is never silently reformatted behind your back.
     shfmt:
       glob: "*.sh"
+      # -d fails on a diff instead of rewriting, so a commit is never silently reformatted.
       run: shfmt -d -i 2 -ci {staged_files}
 
-    # Behaviour: the bats suite pins link()'s contract (creates the symlink,
-    # idempotent, backs up rather than destroys), plus the setup_* steps and
-    # every claude/ asset the statusline and hooks are built from.
-    #
-    # Scoped to the paths the suite can actually observe, derived from every
-    # ${BATS_TEST_DIRNAME}/../ reference in test/setup.bats rather than guessed:
-    # setup.sh, claude/**, zsh/**, starship/**, and test/** itself. Everything
-    # else here (obs/, ghostty/, git/, magnet/, bash/, tmux/, vim/, the two
-    # markdown docs) is config data no test reads, so a commit touching only
-    # those skips the ~15s run.
-    #
-    # The globs are deliberately WIDER than the exact file list. zsh/ and
-    # starship/ are whole directories rather than zshrc + starship.toml because
-    # the suite asserts on ABSENCE too — `[ ! -e zsh/spaceship.zsh ]` only
-    # fails once that file comes back, and a file-level glob would never fire
-    # on the commit that added it. Same reasoning for claude/**: the skills
-    # test walks a hardcoded list of directories, so a new or renamed skill has
-    # to trigger the suite. A false negative here is a broken machine setup
-    # landing green; a false positive is 15 seconds.
-    #
-    # The trailing "**" is load-bearing and is NOT interchangeable with "**/*":
-    # the latter requires at least one intermediate directory, so it matches
-    # claude/lib/session-colors.sh but silently MISSES claude/settings.json.
-    # Verified against lefthook 1.12.2 — the first draft of this scoping used
-    # "**/*" and skipped the whole suite on a claude/statusline.conf commit.
+    # Globs are deliberately wider than the files the suite reads, and the trailing
+    # "**" is NOT interchangeable with "**/*" -- see README "Pre-commit scoping".
     tests:
       glob:
         - "setup.sh"
@@ -57,18 +23,8 @@ pre-commit:
         - "test/**"
       run: bats test/
 
-    # A truncated .bats file does not fail -- it silently DEFINES FEWER TESTS
-    # and the suite still exits 0. Hit for real: an apostrophe inside a
-    # single-quoted awk program closed the quote and took the rest of the file
-    # with it, dropping the count from 66 to 45 with a green run. So assert a
-    # floor on the count as well as on the result. Raise it when tests are
-    # added; it only has to be tight enough to catch a file that stopped
-    # parsing partway through.
-    #
-    # Scoped tighter than `tests`: this one guards the .bats SOURCE against a
-    # quoting bug that silently drops test definitions, so only a commit that
-    # edits test/ can introduce it. Nothing outside test/ can change how many
-    # tests bats parses.
+    # A truncated .bats file defines fewer tests and still exits 0 -- see README
+    # "Why the test count has a floor". Raise the floor when tests are added.
     test-count:
       glob: "test/**"
       run: |
