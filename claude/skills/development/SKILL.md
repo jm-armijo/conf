@@ -15,15 +15,15 @@ A **task** is a self-contained, mergeable unit of work (one PR).
 * **Branching:** Implicit. Cut the branch when work begins (named by the plan, if applicable).
 * **Size Limits:** A PR exceeding ~15 files or a few hundred lines is too big. Split it before starting or mid-flight. Split tests along the same seams to keep commits independently green.
 
-## The Five Steps
+## The Five Steps (execute sequentially)
 
-Execute all five steps sequentially. Use exact step names in `TODO.md` and status updates.
+Use the exact step names in `TODO.md` and status updates.
 
 ### 1. writing tests
 **Always first.** Write or modify tests to assert new expectations and watch them fail *before* touching implementation. Never code first.
 
 ### 2. coding
-Implement the minimum code to pass the failing test. **Refactor here** while tests are green. Run only relevant test files. Loop back to Step 1 until the task's slice is built.
+Implement the minimum code to pass. **Refactor here** while tests are green. Run only relevant test files. Loop back to Step 1 until the task's slice is built.
 
 ### 3. bot review
 Run `/code-review high` (or planned level). **Fix all findings.** Step ends only when the review is clean.
