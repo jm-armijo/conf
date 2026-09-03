@@ -1,46 +1,31 @@
-# Pre-commit gate for this repo.
-#
-# setup.sh is the only executable here and it runs against a real $HOME — link()
-# moves existing dotfiles aside. A bug reaches the machine the moment it's run,
-# and there's no CI to catch it, so the checks live on the commit itself.
-#
-# Nothing here is softened with `|| true`: a check that can't fail can't protect
-# anything.
-
 pre-commit:
   parallel: true
   commands:
-    # Correctness: catches quoting, unset-variable and exit-status bugs that
-    # only show up on the one machine you're setting up.
     shellcheck:
       glob: "*.sh"
       run: shellcheck {staged_files}
 
-    # Consistency: 2-space indent with switch/select cases indented, matching
-    # the existing style in setup.sh. -d fails on a diff instead of rewriting,
-    # so the commit is never silently reformatted behind your back.
     shfmt:
       glob: "*.sh"
+      # Without -d, shfmt prints the formatted file and exits 0: the gate passes silently.
       run: shfmt -d -i 2 -ci {staged_files}
 
-    # Behaviour: the bats suite pins link()'s contract (creates the symlink,
-    # idempotent, backs up rather than destroys). Deliberately NOT glob-scoped —
-    # the tests must run on every commit, including ones that only touch config
-    # data, since a config move can break the paths setup.sh links.
+    # "**" is NOT interchangeable with "**/*" -- see README "Pre-commit scoping".
     tests:
+      glob:
+        - "setup.sh"
+        - "claude/**"
+        - "zsh/**"
+        - "starship/**"
+        - "test/**"
       run: bats test/
 
-    # A truncated .bats file does not fail -- it silently DEFINES FEWER TESTS
-    # and the suite still exits 0. Hit for real: an apostrophe inside a
-    # single-quoted awk program closed the quote and took the rest of the file
-    # with it, dropping the count from 66 to 45 with a green run. So assert a
-    # floor on the count as well as on the result. Raise it when tests are
-    # added; it only has to be tight enough to catch a file that stopped
-    # parsing partway through.
+    # A truncated .bats file defines fewer tests and still exits 0.
     test-count:
+      glob: "test/**"
       run: |
         n=$(bats test/ --count)
-        if [ "$n" -lt 68 ]; then
-          echo "bats sees only $n tests (expected >= 68) -- a .bats file probably stopped parsing partway through"
+        if [ "$n" -lt 105 ]; then
+          echo "bats sees only $n tests (expected >= 105) -- a .bats file probably stopped parsing partway through"
           exit 1
         fi

@@ -1,96 +1,32 @@
 ---
 name: plan-writing
-description: Render a plan as PLAN.html plus a TODO.md of PR-sized increments, git-excluded and opened in the browser, then halt for approval. Use at the end of plan mode, or whenever writing an implementation plan, before any production code is written. Executing the result is the plan-execution skill's job.
+description: How to write an implementation plan - the plan is produced as PLAN.html plus a TODO.md of PR-sized tasks with their branch names, git-excluded and opened in the browser, with one line in the chat, then halt for approval. Use whenever you are writing or revising an implementation plan, including throughout plan mode, before any production code is written. Doing the work is the development skill's job.
 ---
 
 # Plan Writing
 
-Plan the work as you normally would. This skill is about **what the plan is
-written to**, not about what makes a plan good — it adds two output files and
-one halt, and changes nothing about how you research, design, or reason.
+Produces the implementation plan. **Write absolutely no production code.** The `development` skill handles execution.
 
-Plan mode's own plan file stays as it is. `PLAN.html` and `TODO.md` are
-generated *from* the plan, alongside it.
-
-**Write no production code here** — not a stub, not a scaffold. Executing the
-plan is a separate skill (`plan-execution`).
+## Read the templates before you plan, not after
+* **UI Template:** Read `~/.config/claude-templates/UI_TEMPLATE.html` (or bundled `assets/UI_TEMPLATE.html`) *before* researching. Its sections dictate the required plan content.
+* **TODO Template:** Read `~/.config/claude-templates/TODO_TEMPLATE.md` (or bundled fallback) for the checklist structure. Do not copy workflow definitions into it.
 
 ## Procedure
+1. **Generate Files:** Write both to the repository root simultaneously.
+   * **`PLAN.html`:** Adapt the template structure/styling. Drop unused sections. Diagrams must show how information moves and how state changes, not just file lists. **List all tasks with their branch names and justify the split.** Explicitly name any non-standard steps requiring user veto.
+   * **`TODO.md`:** A plain checklist matching the template's shape. Task numbering and branch names must perfectly match `PLAN.html`. Record explicitly out-of-scope items here.
+2. **Resolve Vendor Path:** In `PLAN.html`, replace `{{VENDOR_DIR}}` with the expanded absolute path: `"$HOME/.claude/vendor"`. Copy the subsequent template filename as-is. Do not stat, glob, or verify the file. *Failure to expand this path results in silently broken diagrams.*
+3. **Git Exclude:** Exclude both files locally (never commit):
+   `grep -q "^PLAN.html$" .git/info/exclude || echo -e "PLAN.html\nTODO.md" >> .git/info/exclude`
+4. **Launch:** Execute `open PLAN.html`.
+5. **Halt & Output:** The chat output is one line, exactly: `I've generated the plan, available at PLAN.html.` Do not output summaries, bullet points, or headers to the chat. Wait for user approval. If changes are requested, edit both files synchronously, re-open, and halt again.
 
-1. Read the baselines that ship with this skill:
-   - `assets/UI_TEMPLATE.html` — a worked example, not a blank form. Reproduce
-     its structure and styling; replace its content.
-   - `assets/TODO_TEMPLATE.md` — the increment template, with placeholders to fill.
+## Task Sizing
+* **Size:** A task is a self-contained, mergeable PR. Err toward too large rather than too small (e.g., general case + edge cases = one task). Do not split at the function level.
+* **Sequence:** Sequence strictly by dependency. 
 
-   `~/.config/claude-templates/{UI_TEMPLATE.html,TODO_TEMPLATE.md}` override the
-   bundled copies when present — a machine-local override is intentional.
-
-2. Write **both** files to the repository root, in the same turn:
-
-   - **`PLAN.html`** — the plan you already wrote, rendered for the browser: the
-     components touched, the data flow between them, the boundaries crossed. A
-     diagram that restates the file list is not a diagram; show what calls what
-     and where state lands.
-
-     It must also **say how the work splits into increments, and why**. That
-     split is the one judgement call the user is reviewing.
-
-   - **`TODO.md`** — the same work as increments, each carrying the six-step
-     checklist from the template, copied verbatim.
-
-   Sections the plan does not need are dropped rather than filled with filler.
-   The template is a baseline, not a quota.
-
-3. Exclude both locally — they are working artifacts, never committed:
-
-   ```bash
-   grep -q "^PLAN.html$" .git/info/exclude || printf 'PLAN.html\nTODO.md\n' >> .git/info/exclude
-   ```
-
-4. Open the plan: `open PLAN.html`
-
-   This is the review copy. The user reads the plan in the browser, not in the
-   terminal — that is what these files are for.
-
-5. **Halt** for approval. Do not start implementing.
-
-   Approval comes *after* the browser view, never before it: render first, then
-   ask. Asking for approval and rendering afterwards defeats the skill entirely.
-
-   Expect to iterate. When changes are requested, edit `PLAN.html` and `TODO.md`
-   **together** — the architecture and the increment list must never disagree —
-   re-open `PLAN.html`, and halt again. Repeat until the user approves.
-
-## Sizing an increment
-
-The one thing here that constrains the plan's *shape*, because it determines
-what lands in each PR.
-
-**An increment is a self-contained slice of work worth a pull request on its
-own.** Not one function and its tests — too small to be worth opening a PR for.
-A reviewer should be able to read it, judge it, and merge it by itself.
-
-There is no formula; it depends on the work. Apply judgement, and defend the
-split in `PLAN.html`. When in doubt, err toward **too large rather than too
-small** — a PR not worth reviewing is the wrong unit.
-
-TDD operates *inside* an increment, not across increments: test, code, test,
-code, until the increment's work is done, all in one commit. Splitting the
-general case from its edge case across increments is wrong — both belong to the
-same one.
-
-Increments run strictly in order, one PR each, so sequence them by dependency.
-
-## Settle before halting
-
-- The `/code-review` level, if the user wants something other than `high`.
-- What is deliberately **out of scope**, recorded in `TODO.md` so it cannot
-  drift back in mid-execution.
-
-## Constraints
-
-- The `<title>` and page heading name the *change*, not the repository —
-  "Session colour retention sweep", not "conf".
-- `PLAN.html` is one self-contained file: inline CSS, no external fetches. It is
-  opened from `file://`, where CDN loads and web fonts are unreliable.
-- Every increment states the **verification command** that proves it landed.
+## Strict Constraints
+* **Titles:** The `<title>` and `<h1>` must name the *change* (e.g., "Session colour sweep"), not the repository.
+* **Self-Contained:** `PLAN.html` must run locally via `file://`. Use inline CSS. No external network fetches.
+* **Verification:** Every task must state its verification command in `PLAN.html` only (not in `TODO.md`).
+* **Settle details:** Confirm the `/code-review` level before halting.

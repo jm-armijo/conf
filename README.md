@@ -19,7 +19,7 @@ The script:
 - Symlinks `starship/starship.toml` → `~/.config/starship.toml` — the prompt's own config, which *is* tracked in this repo. This step runs independently of the install above, so the config still lands on a machine where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
-- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory. See [Claude Code](#claude-code) for what is and isn't managed.
+- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory and one for `vendor/`. See [Claude Code](#claude-code) for what is and isn't managed.
 
 The clone location isn't baked in anywhere — `zsh/zshrc` finds its sibling files by
 resolving its own `~/.zshrc` symlink — so any directory works.
@@ -27,6 +27,8 @@ resolving its own `~/.zshrc` symlink — so any directory works.
 Because these are symlinks, any later edit to your live config is saved straight back into the repo — including `git config --global` writes, which follow the symlink into `git/gitconfig`.
 
 Existing files are backed up (renamed with a `.backup.<timestamp>` suffix) before being replaced. The script is idempotent — safe to re-run.
+
+Every step runs through `run()`, which **records a failure and carries on** rather than aborting (`set -uo pipefail`, deliberately no `-e`). One broken step never blocks the rest; the script lists what failed at the end and exits non-zero. Each app's install strategy — file symlink, directory symlink, `defaults import`, or package manager — is chosen from how that app writes to its own files, and the per-app sections below give the reasoning.
 
 After running, restart your shell (`exec zsh`).
 
@@ -107,6 +109,7 @@ one symlink per file, so the rest stays machine-local and out of git:
 | `claude/hooks/block-inefficient-bash.sh` | `~/.claude/hooks/block-inefficient-bash.sh` |
 | `claude/hooks/plan-artifacts-on-exit.sh` | `~/.claude/hooks/plan-artifacts-on-exit.sh` — renders a plan to `PLAN.html`/`TODO.md` in the browser before you are asked to approve it |
 | `claude/skills/<skill>/` | `~/.claude/skills/<skill>/` — one link per skill |
+| `claude/vendor/` | `~/.claude/vendor/` — the whole directory, one link; see [Vendored bundles](#vendored-bundles) |
 
 **One file is renamed across the link.** Claude Code requires the name
 `CLAUDE.md`, but a file by that name in *this* repo would be read as this repo's
@@ -443,11 +446,30 @@ Skill directories follow Claude Code's own layout: `SKILL.md` at the root, with
 `scripts/` for executables, `references/` for docs loaded on demand, and
 `assets/` for templates and fonts. `clean-code` uses `references/` for its
 chapters; `plan-writing` uses `assets/` for the two baselines it fills in
-(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`); its sibling `plan-execution` runs the
-resulting `TODO.md` and needs no assets of its own. Those are tracked in the repo rather
+(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`); its sibling `development` does the
+work and needs no assets of its own. Those are tracked in the repo rather
 than read from `~/.config/claude-templates`, so the skill works on a fresh
 machine with nothing else installed — that path is still honoured when it
 exists, as the machine-local override.
+
+### How plans get written and how work gets done
+
+Two skills. `plan-writing` writes the plan to `PLAN.html` and `TODO.md`, opens it
+in the browser, and halts for approval — **the chat gets one line**, not a
+summary, because you read the plan in the browser. `assets/UI_TEMPLATE.html` is
+an input the model reads *while* planning, so changing the shape of every future
+plan is an edit to that template and nothing else.
+
+`development` then does the work, in five steps: `writing tests`, `coding`,
+`bot review`, `draft pr`, `author review`. Tests always move first, `--no-verify`
+is never allowed, and every task ends in a draft PR that is a hard stop until you
+review it. Five is a baseline — a task needing a migration gets an extra step,
+shown in `PLAN.html` so you can veto it first.
+
+`TODO.md` is a to-do list and nothing else. **Status is derived from the
+checkboxes**, never declared: a task with no steps checked is not started, one
+with some is in progress, a checked task is done. The shape is kept rigidly
+uniform so a script can parse it without edge cases.
 
 ### Adding a skill
 
@@ -456,6 +478,32 @@ mv ~/.claude/skills/<name> claude/skills/<name>   # move the real dir into the r
 # add <name> to the loop in setup_claude_skills, then:
 ./setup.sh                                        # links it back
 ```
+
+### Vendored bundles
+
+`claude/vendor/` holds third-party JavaScript a generated `PLAN.html` loads from
+`file://` — currently just Mermaid 11, the diagram renderer. It is the one
+directory symlink under `~/.claude`, because nothing but this repo writes there.
+
+> **Do not open `claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js`.** It is 3.4MB of
+> minified build output — roughly 750,000 tokens, several times an LLM context
+> window. Reference it by path only; a version bump is a re-download, never a
+> hand-edit.
+
+Bumping the version is a re-download, never a hand-edit:
+
+```bash
+curl -sSL -o claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js \
+  https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
+```
+
+Then re-prepend the agent guard comment to line 1 — a fresh download strips it —
+and check a diagram still renders from `file://`.
+
+It must load as a classic `<script src>`: from `file://` an ESM `import` fails
+even for a local file, and reverting to one breaks every diagram silently. A
+test asserts the template contains neither `cdn.jsdelivr.net` nor
+`type="module"`.
 
 ### One caveat on `settings.json`
 
@@ -557,3 +605,58 @@ three tools — without them commits fail:
 brew install lefthook shellcheck shfmt bats-core
 lefthook install
 ```
+
+`setup.sh` is the only executable here and it runs against a real `$HOME` — `link()`
+moves existing dotfiles aside. A bug reaches the machine the moment it is run, and
+there is no CI, so the checks live on the commit itself. Nothing is softened with
+`|| true`: a check that cannot fail cannot protect anything.
+
+### Pre-commit scoping
+
+The `tests` command is globbed rather than run unconditionally. The paths come from
+every `${BATS_TEST_DIRNAME}/../` reference in `test/setup.bats` — `setup.sh`,
+`claude/**`, `zsh/**`, `starship/**` and `test/**` — so a commit touching only
+config data no test reads (`obs/`, `ghostty/`, `git/`, `magnet/`, `bash/`, `tmux/`,
+`vim/`, the markdown docs) skips the ~15s run.
+
+The globs are deliberately **wider** than the exact file list, because the suite
+asserts on *absence* too. `[ ! -e zsh/spaceship.zsh ]` only starts failing once that
+file comes back, and a file-level glob would never fire on the commit that added it;
+the same reasoning covers `claude/**`, where the skills test walks a hardcoded list
+of directories, so a new or renamed skill has to trigger the suite. A false negative
+is a broken machine setup landing green; a false positive is 15 seconds.
+
+**The trailing `**` is load-bearing and is NOT interchangeable with `**/*`.** The
+latter requires at least one intermediate directory, so it matches
+`claude/lib/session-colors.sh` but silently **misses** `claude/settings.json`.
+Verified against lefthook 1.12.2 — the first draft of this scoping used `**/*` and
+skipped the whole suite on a `claude/statusline.conf` commit.
+
+### Why the test count has a floor
+
+A truncated `.bats` file does not fail — it silently **defines fewer tests** and the
+suite still exits 0. Hit for real: an apostrophe inside a single-quoted awk program
+closed the quote and took the rest of the file with it, dropping the count from 66
+to 45 on a green run. So `test-count` asserts a floor on `bats test/ --count` as
+well as on the result; raise it when tests are added. It only has to be tight enough
+to catch a file that stopped parsing partway through.
+
+It is scoped tighter than `tests` (`test/**` only) because nothing outside `test/`
+can change how many tests bats parses.
+
+### The plan-mode gate
+
+`claude/hooks/plan-artifacts-on-exit.sh` makes plan mode emit `PLAN.html` and
+`TODO.md` without the `plan-writing` skill being named — invoking it by name was
+the thing that kept being forgotten, so the exit is the trigger: block the first
+`ExitPlanMode`, point the model at the skill, let the retry through.
+
+**`PreToolUse` is the load-bearing part.** It runs before the tool, so the plan is
+in the browser and still editable when the approval prompt appears. `PostToolUse`
+would render it at the instant it stopped being reviewable.
+
+Exit 2 blocks (stderr goes back to the model), exit 0 allows. It re-blocks only
+while the artifacts are missing — otherwise it would block its own retry and plan
+mode would be inescapable. It exits 0 for a non-git `cwd` and fails open on bad
+input. `cwd` comes from the payload, never `$PWD`.
+
