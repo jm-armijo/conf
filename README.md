@@ -263,50 +263,10 @@ A context-usage bar on top, then a metrics line:
   "optimise" it to `-uno`, which would stop counting untracked files. It runs once
   per refresh (~12 ms on this repo, against a ~65 ms whole-script budget) and is
   skipped entirely outside a repo.
-- **The palette is filtered by contrast, and the filter is its contract.**
-  Because the foregrounds above are fixed rather than computed per background, the
-  background has to be legible under **both** yellow and green. Every candidate was
-  mapped to RGB via the 6×6×6 cube and scored with the WCAG relative-luminance
-  contrast ratio; a code survives only if the **worse** of the two ratios is
-  ≥ 3.0 (WCAG AA for large text — the right bar for a single row of terminal
-  glyphs).
-
-  **Score against the foregrounds the terminal actually renders.** `SGR 33` and
-  `SGR 32` resolve through the *terminal theme*, not through xterm's defaults:
-  under ghostty's `deep` they are `#d9bd26` and `#1cd915`, not `rgb(205,205,0)`
-  and `rgb(0,205,0)`. An earlier version of this palette was scored against the
-  xterm values and shipped **7 of its 16 codes below the bar** — `144` at 1.18,
-  `208` at 1.26, `255` at 1.61, `201` at 1.64, `228` at 1.77, `130` at 2.46,
-  `95` at 2.87. The swatch page they were picked from looked fine; the terminal
-  did not. A test pins the real constants.
-
-  Both real foregrounds are bright — relative luminance 0.513 and 0.499 — so a
-  3.0 ratio caps a qualifying background at 0.133 luminance, and **only 42 of the
-  256 codes** clear it. That is why the list is short, dark, and contains **no
-  orange at all**: every orange in the cube is too light against these two.
-
-  **Twelve, not sixteen.** The qualifying pool is small and clustered — `21`–`26`
-  is a straight blue ramp — so the best possible 16 could only reach a minimum
-  pairwise ΔE of 24.36, by including codes barely separable from ones already
-  present. Cutting to 12 raised the contrast floor from 3.04 to **3.52** and the
-  pairwise minimum to **24.36**. Running out of colours is not a failure mode:
-  duplicates are correct behaviour, and the assignment rule spreads them evenly.
-
-  **There is no ban on reds.** An earlier version excluded them so the block would
-  not read as an error state; that is superseded, because the block is always a
-  solid painted field behind text rather than a lone glyph, and distinctness earns
-  more than the resemblance costs. `52`, `124` and `125` are in the list on
-  purpose.
-
-  **The array's order is load-bearing.** Assignment walks the list in order, so
-  entries sitting next to each other are handed to sessions likely to be open at
-  the same time. The order is chosen to maximise the CIELab distance between
-  *adjacent* entries: minimum ΔE **91.3**, mean 109.8, versus 53.2 if the same 12
-  codes were simply sorted ascending (which would put `124` beside `125`). It is
-  **cyclic** — the 13th assignment wraps to the first entry, so the `53 → 58` pair
-  counts too (ΔE 96.9). Regenerate the array rather than hand-editing it; adding a
-  code without re-running the ordering breaks the guarantee silently. Tests pin
-  the ordering's minimum ΔE and record the per-code contrast ratios.
+- **The palette is filtered by contrast**, because those fixed foregrounds have to
+  stay legible over every background in it. The rule and the numbers are under
+  [Session colours](#session-colours-are-recorded-not-hashed), which owns the
+  palette.
 - **The metrics wrap when they do not fit.** Normally the left and right groups
   share one line, padded so the line ends on the bar's exact column. When they
   would overflow, the right group moves to its own line, right-aligned to the
@@ -357,11 +317,39 @@ the branch out again — same colour.
 - **The key is directory + branch.** Switching branch changes the colour, which
   is the intended behaviour: it is a different piece of work. Switching *back*
   returns the original colour.
-- **Colours are not exclusive.** Past 16 keys they are reused. A new key takes the
-  **least-used** code, and among codes tied at the lowest count, the one earliest
-  in the palette. With every count at zero that walks the ordered list from the
-  top; after 16 assignments the counts are level again and it starts over. So all
-  16 are handed out before any repeats, and repeats stay evenly spread.
+- **Colours are not exclusive.** Past 12 keys they are reused. A new key takes the
+  **least-used** code, and among those tied at the lowest count, the one earliest
+  in the palette — so with every count at zero it walks the ordered list from the
+  top, and once the counts level again it starts over. All 12 are handed out
+  before any repeats, and repeats stay evenly spread.
+- **Every entry clears a contrast bar, scored against the foregrounds the terminal
+  actually renders.** A background survives only if the worse of its two WCAG
+  ratios — against the yellow and the green above — is ≥ 3.0 (AA for large text).
+  `SGR 33` and `SGR 32` resolve through the *terminal theme*: under ghostty's
+  `deep` they are `#d9bd26` and `#1cd915`, not xterm's `rgb(205,205,0)` and
+  `rgb(0,205,0)`. Scoring xterm's shipped **7 of 16 codes below the bar** — the
+  swatch page looked fine, the terminal did not. A test pins the real constants,
+  and codes `0`–`15` are theme-resolved too, so they are not on the 6×6×6 cube.
+
+  Both foregrounds are bright (luminance 0.513 and 0.499), so 3.0 caps a
+  qualifying background at 0.133 luminance and only **42 of the 256 codes** clear
+  it. Hence a list that is short, dark and has **no orange**. It is twelve rather
+  than sixteen because the pool is clustered — `21`–`26` is a straight blue ramp —
+  so 16 entries could only be reached by including barely separable codes. Cutting
+  to 12 raised the contrast floor from 3.04 to **3.52**. Reds are not excluded:
+  the block is a solid painted field, not a lone glyph, so `52`, `124` and `125`
+  are in on purpose.
+
+  **Two distances are guaranteed, and both are load-bearing.** Every pair of
+  entries is separated by a CIELab ΔE of at least **24.36** (`21` vs `56`) — that
+  is rule 2, distinctness from *every* other entry rather than just from a
+  neighbour, and it is what caps the list at twelve. On top of that the *order* is
+  chosen to maximise the distance between **adjacent** entries, because assignment
+  walks the list and neighbours go to sessions likely open together: minimum ΔE
+  **91.3**, mean 109.8, against 53.2 for the same 12 codes sorted ascending (which
+  would put `124` beside `125`). The list is **cyclic**, so the `53 → 58` wrap
+  counts too (ΔE 96.9). **Regenerate the array, never hand-edit it** — adding a
+  code without re-running the ordering breaks either guarantee silently.
 - **An existing row is never reassigned.** Whatever else happens, a live session's
   colour cannot change underneath it — that is the entire point of the feature,
   and it is why the insert is `INSERT OR IGNORE`. Two sessions racing to claim the
@@ -382,10 +370,10 @@ STATUSLINE_COLOR_RETENTION_DAYS=30   # 0 disables cleanup entirely
 STATUSLINE_COLOR_DB="$HOME/.claude/statusline-colors.db"
 ```
 
-The file is sourced defensively and every setting has an inline default in the
-library, so an absent, unreadable or half-written config falls back rather than
-breaking the statusline. A non-numeric retention value falls back to 30 rather
-than being interpolated into a malformed `DELETE`.
+As with `context-window.conf`, every setting has an inline default, so an absent
+or half-written file falls back rather than breaking the statusline. A
+non-numeric retention value falls back to 30 rather than being interpolated into
+a malformed `DELETE`.
 
 The logic lives in `claude/lib/session-colors.sh` rather than inside the
 statusline, so it can be tested on its own **and** used from your own shell:
@@ -411,17 +399,14 @@ Every failure degrades to the old behaviour rather than to a broken line: if
 the statusline falls back to hashing cwd+branch into the same palette.
 
 **`PRAGMA busy_timeout=10000` is not optional.** SQLite allows one writer at a
-time and by default abandons a locked write *instantly*. That fails in two ways,
-and the quiet one is worse: measured across 24 parallel writers, dropping the
-pragma silently lost 11 of 24 rows with **zero** bytes of stderr — and it can
-instead print `database is locked`, which under the rule above discards the whole
-statusline. With the pragma, 24 of 24 rows and no stderr. Writes hold the lock
-for microseconds, so the ceiling is never approached in practice — it is a
-backstop against the machine stalling mid-transaction, not a contention budget. The
-regression test asserts on **rows written**, not on stderr, precisely because a
-stderr-only assertion passes vacuously here. (`journal_mode=WAL` is set
-alongside it, but that one is a property of the file rather than the connection,
-so it only has to be set once.)
+time and by default abandons a locked write *instantly*. The quiet failure is the
+worse one: across 24 parallel writers, dropping the pragma silently lost 11 rows
+with **zero** bytes of stderr. It can also print `database is locked`, which under
+the rule above discards the whole statusline. The regression test therefore
+asserts on **rows written**, since a stderr-only assertion passes vacuously.
+Writes hold the lock for microseconds, so the ceiling is a backstop against a
+machine stall, not a contention budget. (`journal_mode=WAL` is set alongside it,
+but is a property of the file, so once is enough.)
 
 Both pragmas print a result row, which would be captured by the caller's `$(...)`
 and read as a colour code — an early version painted every session in colour

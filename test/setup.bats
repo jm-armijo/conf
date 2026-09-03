@@ -1672,3 +1672,60 @@ EOF
   out=$(statusline_run 160 "$payload")
   [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 2 ]
 }
+
+@test "README documents the terminal-theme foregrounds the palette is scored against" {
+  # Trimming session-colors.sh removes the comment that named these. Scoring
+  # xterm's rgb(205,205,0)/rgb(0,205,0) instead is what shipped seven illegible
+  # codes, so the real values have to survive somewhere a human will look.
+  local readme="${BATS_TEST_DIRNAME}/../README.md"
+  grep -qi '#d9bd26' "$readme"
+  grep -qi '#1cd915' "$readme"
+  # The bar itself, not a bare "3.0" that any unrelated figure would satisfy.
+  grep -qE '(ratios|worse of).{0,80}3\.0' "$readme"
+  # Rule 2, the pairwise floor. It is the one palette guarantee no test computes,
+  # so if the prose stops stating it, a regeneration can break it unnoticed.
+  grep -qE '24\.36' "$readme"
+}
+
+@test "no document claims the palette holds sixteen colours" {
+  # The palette is twelve. A stale "16" in the README outliving the comments it
+  # replaced would make this trim a net loss.
+  local n root
+  root="${BATS_TEST_DIRNAME}/.."
+  # shellcheck source=/dev/null
+  . "${root}/claude/lib/session-colors.sh"
+  n=${#SESSION_COLOR_PALETTE[@]}
+
+  bats_run grep -nE "(Past|all) ${n}|${n} keys" "${root}/README.md"
+  [ "$status" -eq 0 ]
+
+  # Phrasing-independent, but present-tense only. Both files legitimately discuss
+  # the OLD sixteen-code palette in the past tense ("7 of 16 codes below the
+  # bar"), so match claims that 16 is the size NOW: a quantifier or copula
+  # binding 16 to the palette, rather than any co-occurrence of the two.
+  bats_run grep -nEi \
+    "(past|all|only|the) 16 (colours?|codes?|keys|entries|assignments)|16 (colours?|codes?|keys|entries) (in|are|remain)|(palette|list) (of|has|holds|contains) 16|after 16 assignments" \
+    "${root}/README.md" "${root}/claude/lib/session-colors.sh"
+  [ "$status" -ne 0 ]
+}
+
+@test "session-colors.sh carries a one-line why for each load-bearing line" {
+  # CLAUDE.md names three invariants as load-bearing. Their tests catch a
+  # behaviour change but not a comment deletion, so the reason each line exists
+  # must stay AT the line -- briefly, not as an essay.
+  local script total
+  script="${BATS_TEST_DIRNAME}/../claude/lib/session-colors.sh"
+
+  grep -qE '^\s*#.*busy_timeout' "$script"
+  grep -qE '^\s*#.*OR REPLACE' "$script"
+  # The REASON the order matters, not the bare word: "# TODO: reorder this" would
+  # satisfy a `[Oo]rder` match while the invariant it guards had been deleted.
+  grep -qE '^\s*#.*[Oo]rder is load-bearing' "$script"
+  grep -qE '^\s*#.*(adjacent|likely open together)' "$script"
+
+  # Essential only: the file must not go back to explaining itself at length.
+  # Prose only -- the shebang and shellcheck directives are not explanations, and
+  # counting them would make a future directive look like a budget failure.
+  total=$(grep -E '^\s*#([^!]|$)' "$script" | grep -cvE '^\s*#\s*shellcheck')
+  [ "$total" -le 25 ]
+}
