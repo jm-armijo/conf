@@ -270,8 +270,14 @@ claude_env() {
   echo "#!/bin/bash" >"$REPO_DIR/claude/hooks/block-inefficient-bash.sh"
   echo "#!/bin/bash" >"$REPO_DIR/claude/hooks/plan-artifacts-on-exit.sh"
 
+  # Linked as a whole directory, not per-file, so the fixture is a directory with
+  # something in it. A stand-in stands in for the 3.4MB bundle deliberately: the
+  # tests must never copy or read the real one.
+  mkdir -p "$REPO_DIR/claude/vendor"
+  echo "// not the real bundle" >"$REPO_DIR/claude/vendor/mermaid.min.DO-NOT-READ.js"
+
   local skill
-  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing ui-separation; do
     mkdir -p "$REPO_DIR/claude/skills/$skill"
     echo "# $skill" >"$REPO_DIR/claude/skills/$skill/SKILL.md"
   done
@@ -357,7 +363,7 @@ claude_env() {
   [ "$status" -eq 0 ]
 
   local skill
-  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing ui-separation; do
     # Per-skill *directory* symlinks, so a skill's own references/ subtree comes
     # along without needing a line here for every file inside it.
     [ -L "$HOME/.claude/skills/$skill" ]
@@ -407,6 +413,250 @@ claude_env() {
   # matching run()'s record-and-continue behaviour one level up.
   [ -L "$HOME/.claude/skills/bug-fixing" ]
   [ -L "$HOME/.claude/skills/ui-separation" ]
+}
+
+# --- setup_claude_vendor ---------------------------------------------------
+#
+# The one directory symlink under ~/.claude, and the tests pin why it is allowed
+# to be one: nothing outside this repo writes to ~/.claude/vendor, unlike
+# ~/.claude and ~/.claude/skills, which are shared with Claude Code's own state.
+
+@test "setup_claude_vendor symlinks the vendor directory itself" {
+  claude_env
+
+  bats_run setup_claude_vendor
+  [ "$status" -eq 0 ]
+
+  # The DIRECTORY is the link, not the files inside it. That is what lets a
+  # second vendored bundle land without a new line in setup.sh.
+  [ -L "$HOME/.claude/vendor" ]
+  [ "$(readlink "$HOME/.claude/vendor")" = "$REPO_DIR/claude/vendor" ]
+  [ -f "$HOME/.claude/vendor/mermaid.min.DO-NOT-READ.js" ]
+}
+
+@test "setup_claude_vendor is idempotent" {
+  claude_env
+  setup_claude_vendor
+
+  bats_run setup_claude_vendor
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$HOME/.claude/vendor")" = "$REPO_DIR/claude/vendor" ]
+  local backups=("$HOME"/.claude/vendor.backup.*)
+  [ ! -e "${backups[0]}" ]
+}
+
+@test "setup_claude_vendor fails when the vendor directory is missing" {
+  claude_env
+  rm -r "$REPO_DIR/claude/vendor"
+
+  bats_run setup_claude_vendor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *skip:* ]]
+  [ ! -e "$HOME/.claude/vendor" ]
+}
+
+@test "the vendored mermaid bundle is tracked and carries its do-not-read note" {
+  local vendor="${BATS_TEST_DIRNAME}/../claude/vendor"
+  # Existence only -- never read the bundle itself, it is ~750,000 tokens.
+  [ -f "$vendor/mermaid.min.DO-NOT-READ.js" ]
+  [ -f "$vendor/!READ-ME-FIRST.md" ]
+  # The filename is load-bearing: it is the warning an agent sees in a path.
+  grep -q "DO-NOT-READ" "$vendor/!READ-ME-FIRST.md"
+}
+
+# --- the plan-writing templates --------------------------------------------
+
+@test "UI_TEMPLATE loads mermaid from the vendored bundle, not a CDN or ESM import" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
+  # PLAN.html is opened from file://, where an ESM `import` fails even for a
+  # local file ("Failed to fetch dynamically imported module") and a CDN may be
+  # unreachable offline. Verified in headless Chrome, both directions. A classic
+  # <script src> is exempt from those module CORS rules. This test exists because
+  # "modernising" it back to an import breaks every diagram with no error at all.
+  grep -q 'script src="{{VENDOR_DIR}}/mermaid.min.DO-NOT-READ.js"' "$tpl"
+  bats_run grep -q 'cdn.jsdelivr.net' "$tpl"
+  [ "$status" -ne 0 ]
+  bats_run grep -q 'type="module"' "$tpl"
+  [ "$status" -ne 0 ]
+}
+
+@test "UI_TEMPLATE substitutes the vendor directory and hardcodes no username" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
+  # A template with /Users/<someone> baked in works on exactly one machine. Only
+  # the DIRECTORY is substituted; the filename stays literal template text, so
+  # the generating model resolves a directory and never handles a value pointing
+  # at the bundle.
+  grep -q '{{VENDOR_DIR}}' "$tpl"
+  bats_run grep -q '/Users/' "$tpl"
+  [ "$status" -ne 0 ]
+  grep -q 'mermaid.min.DO-NOT-READ.js' "$tpl"
+}
+
+@test "plan-writing tells the model to substitute the vendor directory" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
+  # An unsubstituted {{VENDOR_DIR}} fails silently -- diagrams render as raw text
+  # with no console error -- so the instruction has to be in the skill, not only
+  # in a template comment the model may skim.
+  grep -q '{{VENDOR_DIR}}' "$skill"
+  grep -q '\.claude/vendor' "$skill"
+}
+
+@test "plan-writing reads as plan-generation instructions, not a rendering step" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
+  # The reframing this file exists to hold: the skill is consulted WHILE planning
+  # and the template's sections are what the plan must cover, which is what lets
+  # the plan's shape be changed by editing the template alone. The old wording
+  # ("this skill is about what the plan is written to") made it a post-hoc
+  # formatter and must not come back.
+  bats_run grep -q 'what the plan is written to' "$skill"
+  [ "$status" -ne 0 ]
+  grep -qi 'not after' "$skill"
+  # And the rule most likely to be dropped on a rewrite.
+  grep -q 'chat output is one line' "$skill"
+}
+
+@test "plan-writing does not restate the template's section list" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
+  # The template is the single definition of a plan's shape. Enumerating the
+  # sections here too would create a second copy that silently disagrees, and
+  # would defeat the point of being able to retune plans by editing one file.
+  bats_run grep -qi 'Risks & open questions' "$skill"
+  [ "$status" -ne 0 ]
+  bats_run grep -qi 'Data flow' "$skill"
+  [ "$status" -ne 0 ]
+}
+
+@test "UI_TEMPLATE's do-not-read warning sits immediately above the script tag" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
+  local script_line prev
+  script_line="$(grep -n 'script src="{{VENDOR_DIR}}' "$tpl" | cut -d: -f1)"
+  [ -n "$script_line" ]
+  prev="$(sed -n "$((script_line - 1))p" "$tpl")"
+  # Adjacency is the property that matters and the one that silently rots: the
+  # warning has to be the last thing read before the path. Both strings merely
+  # being present somewhere in the file is not the same guarantee, so assert the
+  # comment CLOSES on the line directly above the tag.
+  [[ "$prev" == *"-->"* ]]
+  grep -q 'AGENT / LLM: do NOT read' "$tpl"
+}
+
+@test "UI_TEMPLATE shows the task split with a branch name for each task" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/UI_TEMPLATE.html"
+  # The split into PR-sized tasks and the branch each is cut on are what the user
+  # approves, so they have to be visible in the browser copy. TODO.md is a bare
+  # checklist and is not the review surface.
+  grep -q '<h2>Tasks</h2>' "$tpl"
+  grep -q '<th>Branch</th>' "$tpl"
+  grep -q 'feat/retry-policy' "$tpl"
+}
+
+@test "plan-writing requires the plan to state tasks and branch names" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/SKILL.md"
+  grep -qi 'branch name' "$skill"
+  # And it must hand execution to `development`, not to the old phase-named skill.
+  grep -q 'development' "$skill"
+  bats_run grep -q 'plan-execution' "$skill"
+  [ "$status" -ne 0 ]
+}
+
+# --- the development skill and the to-do list it drives --------------------
+#
+# `development` was `plan-execution`. The rename is the substance: a skill
+# described as "execute an approved plan" never triggers, because nobody labels
+# the phase -- after approval you just start working. So it is described by the
+# activity, and its steps apply to every piece of work, plan or not.
+
+@test "the development skill triggers on doing work, not on executing a plan" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/development/SKILL.md"
+  [ -f "$skill" ]
+  [ ! -e "${BATS_TEST_DIRNAME}/../claude/skills/plan-execution" ]
+  local desc
+  desc="$(grep -m1 '^description:' "$skill")"
+  # The description is the whole trigger surface. Naming the phase there is the
+  # bug this rename fixed, so a description that only advertises plan execution
+  # must fail here.
+  [[ "$desc" == *"bug"* ]]
+  [[ "$desc" != *"Execute an approved"* ]]
+  # And the steps must be stated to apply with or without a plan.
+  grep -qi 'whether or not a plan' "$skill"
+}
+
+@test "the development skill owns the contract the template no longer carries" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/development/SKILL.md"
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
+  # `draft pr` swallowed the old separate commit step. That merge is exactly how
+  # the --no-verify prohibition gets dropped, so pin it to the skill.
+  grep -q -- '--no-verify' "$skill"
+  grep -qi 'never allowed' "$skill"
+  # A to-do list is a to-do list: the contract prose must not be copied back in.
+  bats_run grep -q -- '--no-verify' "$tpl"
+  [ "$status" -ne 0 ]
+  # Five is a baseline, not a ceiling.
+  grep -qi 'baseline' "$skill"
+  # And a TODO.md, when present, is read and kept current against PLAN.html.
+  grep -q 'PLAN.html' "$skill"
+}
+
+@test "TODO_TEMPLATE names the five steps in order, numbered, one per line" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
+  # These are the user's exact step labels and also what a parser reads, so both
+  # the wording and the numbering are fixed. Assert the whole ordered sequence
+  # from one task, not merely that the words appear somewhere in the file.
+  local want=("1. writing tests" "2. coding" "3. bot review" "4. draft pr" "5. author review")
+  local got
+  got="$(grep -o '^- \[ \] [0-9]\. .*' "$tpl" | head -5 | sed 's/^- \[ \] //')"
+  local i=0 line
+  while IFS= read -r line; do
+    [ "$line" = "${want[$i]}" ]
+    i=$((i + 1))
+  done <<<"$got"
+  [ "$i" -eq 5 ]
+}
+
+@test "TODO_TEMPLATE derives status from checkboxes and declares none" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
+  # A declared status can disagree with the boxes; a derived one cannot. So the
+  # old Progress table, a status column and any front-matter marker are all out.
+  # Each negation is `bats_run`-wrapped rather than written as `! grep ...`:
+  # under bats a bare negation mid-body does NOT fail the test (only the last
+  # command's status is consulted), so those assertions were silently
+  # unevaluated. `bats_run`, never `run` -- setup.sh's own step-wrapper shadows
+  # bats' helper, as the suite's other tests do.
+  # The pattern targets a *declared* status only -- a `**Status:**` line or a
+  # `Status` table column. The bare word legitimately appears in the header
+  # comment that explains the derivation, and is deleted on generation.
+  bats_run grep -qi '^| # | ' "$tpl"
+  [ "$status" -ne 0 ]
+  bats_run grep -qiE '^[|*[:space:]]*\*?\*?Status\*?\*?[[:space:]]*[:|]' "$tpl"
+  [ "$status" -ne 0 ]
+  bats_run grep -q '^---$' "$tpl"
+  [ "$status" -ne 0 ]
+  # The task's own checkbox lives in its heading, keeping task and state on one
+  # line, and every task heading has the identical form a parser depends on.
+  grep -q '^## - \[ \] Task 1: ' "$tpl"
+  local headings tasks
+  headings="$(grep -c '^## - \[ \] Task ' "$tpl")"
+  tasks="$(grep -c '^## - \[' "$tpl")"
+  [ "$headings" -eq "$tasks" ]
+  [ "$headings" -ge 2 ]
+}
+
+@test "TODO_TEMPLATE's uniform shape parses without edge cases" {
+  local tpl="${BATS_TEST_DIRNAME}/../claude/skills/plan-writing/assets/TODO_TEMPLATE.md"
+  # The point of the rigid shape is that a script can answer "which task, which
+  # step" with a grep. Prove it: every task heading must yield a number and a
+  # name, and each must be followed by a numbered step block of the same form.
+  local n
+  n="$(grep -c '^## - \[[ x]\] Task ' "$tpl")"
+  [ "$n" -ge 2 ]
+  # Steps are 5 per task at minimum and always numbered from 1.
+  local steps
+  steps="$(grep -c '^- \[[ x]\] [0-9]\+\. ' "$tpl")"
+  [ "$steps" -eq $((n * 5)) ]
+  # Each task carries a branch, since that is what the user reviews.
+  local branches
+  branches="$(grep -c '^\*\*Branch:\*\* ' "$tpl")"
+  [ "$branches" -eq "$n" ]
 }
 
 # --- the repo's own tracked files ------------------------------------------
@@ -513,7 +763,7 @@ plan_hook() {
   mkdir -p "$scratch"
 
   bats_run plan_hook "$scratch"
-  # No repo means no branch, no PR and no increments worth the name; a scratch
+  # No repo means no branch, no PR and no tasks worth the name; a scratch
   # directory must not be forced through a PR-shaped workflow.
   [ "$status" -eq 0 ]
 }
@@ -533,6 +783,36 @@ plan_hook() {
   [[ "$output" == *"before asking for approval"* ]]
 }
 
+@test "plan gate tells the model the chat output is one line, not a summary" {
+  local repo="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+
+  bats_run plan_hook "$repo"
+  [ "$status" -eq 2 ]
+  # The rule most likely to be ignored: having written PLAN.html, the reflex is
+  # to also paste the plan into the terminal, which is the duplication these
+  # files exist to remove. The gate has to say so at the point of exit.
+  [[ "$output" == *"ONE LINE"* ]]
+  [[ "$output" == *"No summary"* ]]
+}
+
+@test "plan gate presents the skill as how a plan is written, not a formatter" {
+  local repo="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+
+  bats_run plan_hook "$repo"
+  [ "$status" -eq 2 ]
+  # An earlier message said the skill "formats and splits" the plan and "does not
+  # replace your thinking". That framing is what made plan-writing a post-hoc
+  # renderer, so the plan's shape could never be changed by editing the template.
+  # The message must send the model back to the template as an input.
+  [[ "$output" == *"while you"* ]]
+  [[ "$output" == *"template"* ]]
+  [[ "$output" != *"formats and splits"* ]]
+}
+
 @test "plan gate fails open on malformed input" {
   bats_run bash -c "printf 'not json' | '${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh'"
   # A hook that errors on an unexpected payload would wedge plan mode entirely.
@@ -544,7 +824,7 @@ plan_hook() {
   # claude/skills without that list being updated would only surface as a failing
   # step on the next machine setup.
   local skill
-  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing ui-separation; do
     [ -f "${BATS_TEST_DIRNAME}/../claude/skills/$skill/SKILL.md" ]
   done
 }
@@ -568,7 +848,8 @@ plan_hook() {
   local zshrc="${BATS_TEST_DIRNAME}/../zsh/zshrc"
   # ZSH_THEME must be empty: a non-empty theme would race starship for $PROMPT.
   grep -qx 'ZSH_THEME=""' "$zshrc"
-  ! grep -qi 'spaceship' "$zshrc"
+  bats_run grep -qi 'spaceship' "$zshrc"
+  [ "$status" -ne 0 ]
   [ ! -e "${BATS_TEST_DIRNAME}/../zsh/spaceship.zsh" ]
   # agnoster stays: it is the documented fallback and setup_zsh still links it.
   [ -f "${BATS_TEST_DIRNAME}/../zsh/agnoster.zsh-theme" ]
@@ -1625,14 +1906,55 @@ age_rows() { # <days>
   # (Silent loss is the milder half. The same abandoned write can instead print
   # "database is locked", and Claude Code discards the WHOLE statusline on a
   # single stderr byte.)
+  #
+  # WHY EACH WRITER IS WAITED ON INDIVIDUALLY
+  #
+  # This test failed twice under load on a busy machine and passed everywhere
+  # else. `wait` with no argument reaps every child but reports NOTHING about
+  # any of them, so a writer that died -- killed, forked-failed, or exiting
+  # non-zero -- was indistinguishable from a lost row: both surfaced as the
+  # same bare count mismatch on the line below. Waiting per-PID and asserting
+  # the statuses separates "the library lost a write" (the regression this
+  # test exists for) from "the harness never ran 24 writers" (a test bug),
+  # which is precisely the diagnostic that was missing when this went red.
+  #
+  # What was RULED OUT by measurement, so nobody re-litigates it here:
+  #
+  # - busy_timeout exhaustion is not the mechanism at this scale. The 24
+  #   writers complete in ~0.22s against the library's 10s budget -- a 45x
+  #   margin -- and that figure is UNCHANGED with 24 CPU-bound spinners on 8
+  #   cores, so CPU load alone cannot get near the ceiling. Forcing the timeout
+  #   to genuinely expire takes a >10s exclusive lock hold; that loses all 24
+  #   rows with zero bytes of stderr, and is a machine stall rather than
+  #   contention. The 10s ceiling in session-colors.sh therefore stays as it
+  #   is -- it is the thing keeping this green, not the thing breaking it.
+  # - The harness does not leak state: STATUSLINE_COLOR_DB is per-test under
+  #   BATS_TEST_TMPDIR, and a bare `wait` was verified never to return before
+  #   all 24 rows were durable (row counts taken immediately after wait and
+  #   again 1s later agreed across 40 runs under load).
+  #
+  # A FIFO barrier was tried here to release all 24 writers simultaneously and
+  # was REJECTED: a single ": >gate" reliably releases only 23 of 24 readers on
+  # this platform (measured 23/24 on every run), leaving one blocked forever
+  # and hanging the suite. It also bought nothing measurable -- staggered and
+  # barrier start-spreads were indistinguishable, both dominated by process
+  # startup. Do not reintroduce one without measuring both of those.
   local err="${BATS_TEST_TMPDIR}/err"
   : >"$err"
 
-  local i
+  local i pids=()
   for i in $(seq 1 24); do
     (session_color_assign "/dir$i" main >/dev/null 2>>"$err") &
+    pids+=("$!")
   done
-  wait
+
+  local pid failed=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || failed=$((failed + 1))
+  done
+  # A writer that exits non-zero is a real defect: session_color_assign returns
+  # 0 on every path it is designed to take here.
+  [ "$failed" -eq 0 ]
 
   [ "$(sqlite3 "$STATUSLINE_COLOR_DB" 'SELECT COUNT(*) FROM colors;')" -eq 24 ]
   [ "$(wc -c <"$err" | tr -d ' ')" -eq 0 ]

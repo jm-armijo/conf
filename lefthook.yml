@@ -24,10 +24,37 @@ pre-commit:
       run: shfmt -d -i 2 -ci {staged_files}
 
     # Behaviour: the bats suite pins link()'s contract (creates the symlink,
-    # idempotent, backs up rather than destroys). Deliberately NOT glob-scoped —
-    # the tests must run on every commit, including ones that only touch config
-    # data, since a config move can break the paths setup.sh links.
+    # idempotent, backs up rather than destroys), plus the setup_* steps and
+    # every claude/ asset the statusline and hooks are built from.
+    #
+    # Scoped to the paths the suite can actually observe, derived from every
+    # ${BATS_TEST_DIRNAME}/../ reference in test/setup.bats rather than guessed:
+    # setup.sh, claude/**, zsh/**, starship/**, and test/** itself. Everything
+    # else here (obs/, ghostty/, git/, magnet/, bash/, tmux/, vim/, the two
+    # markdown docs) is config data no test reads, so a commit touching only
+    # those skips the ~15s run.
+    #
+    # The globs are deliberately WIDER than the exact file list. zsh/ and
+    # starship/ are whole directories rather than zshrc + starship.toml because
+    # the suite asserts on ABSENCE too — `[ ! -e zsh/spaceship.zsh ]` only
+    # fails once that file comes back, and a file-level glob would never fire
+    # on the commit that added it. Same reasoning for claude/**: the skills
+    # test walks a hardcoded list of directories, so a new or renamed skill has
+    # to trigger the suite. A false negative here is a broken machine setup
+    # landing green; a false positive is 15 seconds.
+    #
+    # The trailing "**" is load-bearing and is NOT interchangeable with "**/*":
+    # the latter requires at least one intermediate directory, so it matches
+    # claude/lib/session-colors.sh but silently MISSES claude/settings.json.
+    # Verified against lefthook 1.12.2 — the first draft of this scoping used
+    # "**/*" and skipped the whole suite on a claude/statusline.conf commit.
     tests:
+      glob:
+        - "setup.sh"
+        - "claude/**"
+        - "zsh/**"
+        - "starship/**"
+        - "test/**"
       run: bats test/
 
     # A truncated .bats file does not fail -- it silently DEFINES FEWER TESTS
@@ -37,10 +64,16 @@ pre-commit:
     # floor on the count as well as on the result. Raise it when tests are
     # added; it only has to be tight enough to catch a file that stopped
     # parsing partway through.
+    #
+    # Scoped tighter than `tests`: this one guards the .bats SOURCE against a
+    # quoting bug that silently drops test definitions, so only a commit that
+    # edits test/ can introduce it. Nothing outside test/ can change how many
+    # tests bats parses.
     test-count:
+      glob: "test/**"
       run: |
         n=$(bats test/ --count)
-        if [ "$n" -lt 68 ]; then
-          echo "bats sees only $n tests (expected >= 68) -- a .bats file probably stopped parsing partway through"
+        if [ "$n" -lt 105 ]; then
+          echo "bats sees only $n tests (expected >= 105) -- a .bats file probably stopped parsing partway through"
           exit 1
         fi

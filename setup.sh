@@ -186,6 +186,22 @@ setup_claude() {
   link "$REPO_DIR/claude/hooks/plan-artifacts-on-exit.sh" "$HOME/.claude/hooks/plan-artifacts-on-exit.sh" || return 1
 }
 
+# Third-party bundles PLAN.html loads from file://, currently just Mermaid.
+#
+# This one IS a directory symlink, unlike everything else under ~/.claude, and
+# the difference is ownership rather than taste. ~/.claude and ~/.claude/skills
+# are *shared*: Claude Code and its plugins write their own state into them, so
+# linking either would drag that state into the repo — hence the per-file and
+# per-skill lists above. Nothing but this repo writes to ~/.claude/vendor; the
+# whole directory is ours, which is the OBS case, so one link covers it and
+# adding a second vendored bundle needs no line here.
+#
+# Its own step, not a line in setup_claude, so a machine without it still gets
+# settings.json and the hooks; a plan simply renders without its diagram.
+setup_claude_vendor() {
+  link "$REPO_DIR/claude/vendor" "$HOME/.claude/vendor"
+}
+
 # Skills get one symlink per skill directory rather than a single symlink of
 # ~/.claude/skills, because that directory is *shared* — Claude Code's plugins
 # write their own state into it (the ruby-lsp plugin drops a Gemfile and lockfile
@@ -202,7 +218,7 @@ setup_claude() {
 # loudly on its own line without also taking settings.json and the hooks with it.
 setup_claude_skills() {
   local skill status=0
-  for skill in bug-fixing clean-code plan-execution plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing ui-separation; do
     link "$REPO_DIR/claude/skills/$skill" "$HOME/.claude/skills/$skill" || status=1
   done
   return "$status"
@@ -222,6 +238,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run "obs" setup_obs
   run "claude" setup_claude
   run "claude-skills" setup_claude_skills
+  run "claude-vendor" setup_claude_vendor
 
   echo
   if [[ ${#errors[@]} -eq 0 ]]; then

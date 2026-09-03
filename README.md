@@ -19,7 +19,7 @@ The script:
 - Symlinks `starship/starship.toml` → `~/.config/starship.toml` — the prompt's own config, which *is* tracked in this repo. This step runs independently of the install above, so the config still lands on a machine where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
-- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory. See [Claude Code](#claude-code) for what is and isn't managed.
+- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory and one for `vendor/`. See [Claude Code](#claude-code) for what is and isn't managed.
 
 The clone location isn't baked in anywhere — `zsh/zshrc` finds its sibling files by
 resolving its own `~/.zshrc` symlink — so any directory works.
@@ -107,6 +107,7 @@ one symlink per file, so the rest stays machine-local and out of git:
 | `claude/hooks/block-inefficient-bash.sh` | `~/.claude/hooks/block-inefficient-bash.sh` |
 | `claude/hooks/plan-artifacts-on-exit.sh` | `~/.claude/hooks/plan-artifacts-on-exit.sh` — renders a plan to `PLAN.html`/`TODO.md` in the browser before you are asked to approve it |
 | `claude/skills/<skill>/` | `~/.claude/skills/<skill>/` — one link per skill |
+| `claude/vendor/` | `~/.claude/vendor/` — the whole directory, one link; see [Vendored bundles](#vendored-bundles) |
 
 **One file is renamed across the link.** Claude Code requires the name
 `CLAUDE.md`, but a file by that name in *this* repo would be read as this repo's
@@ -443,11 +444,89 @@ Skill directories follow Claude Code's own layout: `SKILL.md` at the root, with
 `scripts/` for executables, `references/` for docs loaded on demand, and
 `assets/` for templates and fonts. `clean-code` uses `references/` for its
 chapters; `plan-writing` uses `assets/` for the two baselines it fills in
-(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`); its sibling `plan-execution` runs the
-resulting `TODO.md` and needs no assets of its own. Those are tracked in the repo rather
+(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`); its sibling `development` does the
+work and needs no assets of its own. Those are tracked in the repo rather
 than read from `~/.config/claude-templates`, so the skill works on a fresh
 machine with nothing else installed — that path is still honoured when it
 exists, as the machine-local override.
+
+### How plans get written
+
+`plan-writing` is **the instructions for writing a plan**, not a formatter run
+over one that already exists. It used to be the latter, and that was the problem:
+with the plan's shape described in prose inside the skill, there was nowhere to
+adjust *how plans are made* short of rewriting the skill.
+
+So `assets/UI_TEMPLATE.html` is now an input the model reads **while planning** —
+its sections are what a plan has to cover, which means reading it early changes
+what gets researched. `SKILL.md` deliberately does not repeat that list. **To
+change the shape of every future plan, edit the template and nothing else.**
+
+Nothing about how a plan is researched or reasoned about changed. What changed is
+where it lands:
+
+- `PLAN.html` and `TODO.md`, opened in the browser.
+- **The chat gets one line** — "I've generated the plan, available at
+  `PLAN.html`" — and no summary, headings or bullets. You read the plan in the
+  browser; repeating it in the terminal is the duplication the files exist to
+  remove. Stated in the skill, the template and the hook's block message, each
+  with a test.
+
+### How work gets done
+
+`development` is the skill that used to be called `plan-execution`, and the
+rename is the whole point. A skill described as *"execute an approved plan"*
+never triggers, because **nobody labels the phase** — after a plan is approved
+you do not think "now I open the skill for implementing the plan", you just
+start working. It is the same failure mode that made `plan-writing` need a hook.
+
+So it is described by the *activity* — writing a feature, fixing a bug,
+changing behaviour — and fires on "let's build X" with no plan in sight. Its
+five steps therefore apply to **every piece of work**, plan or not:
+
+1. `writing tests` — always first, for *changes* as well as additions.
+2. `coding` — the minimum to pass, refactoring included; loop back to 1.
+3. `bot review` — `/code-review high`, fixing what it finds.
+4. `draft pr` — one atomic commit, push, `gh pr create --draft`, opened in the
+   browser.
+5. `author review` — a hard stop until the PR is ready for review.
+
+Steps 4 and 5 used to be three: a separate "atomic commit and push" was merged
+into `draft pr`, because a GitHub draft PR cannot exist without a commit and a
+push behind it. The rule that merge risks losing is stated explicitly under that
+step: **`--no-verify` is never allowed** — a failing pre-commit hook is fixed as
+part of the step, and the step is not done until the push succeeds.
+
+Five is a **baseline, not a ceiling**: a task needing a migration or a manual
+verification gets an extra step, named in the same lowercase style and shown in
+`PLAN.html` so it can be vetoed before work starts. Branch creation is implicit
+at a task's start, not a step.
+
+The unit is a **task** — a slice of work worth its own PR. It was called an
+"increment" until it was renamed; the meaning did not change.
+
+### Why TODO.md declares no status
+
+`TODO.md` is a to-do list and nothing else. The contract above lives in the
+`development` skill, not in the template, so it is not copied into every
+generated file.
+
+**Status is derived from the checkboxes**, never written down. There is no
+status column, no front-matter, no marker comment — a declared status can
+disagree with the boxes, and the old Progress table was exactly that
+duplication:
+
+| state | meaning |
+|---|---|
+| not started | task unchecked, zero steps checked |
+| in progress | task unchecked, at least one step checked |
+| completed | task checked — its steps are trusted done |
+
+The current step is the first unchecked one, and every task lists **all** its
+steps whatever its state, so what is pending is always visible. The shape is
+kept rigidly uniform — identical headings, numbered steps, the short name always
+in the same position — so a script can answer "which are done, which is in
+progress, what step" without encoding edge cases.
 
 ### Adding a skill
 
@@ -456,6 +535,40 @@ mv ~/.claude/skills/<name> claude/skills/<name>   # move the real dir into the r
 # add <name> to the loop in setup_claude_skills, then:
 ./setup.sh                                        # links it back
 ```
+
+### Vendored bundles
+
+`claude/vendor/` holds third-party JavaScript that a generated `PLAN.html` loads
+from `file://`. Currently one file: Mermaid 11, the diagram renderer.
+
+> **Do not open `claude/vendor/mermaid.min.DO-NOT-READ.js`.** It is 3.4MB of
+> minified build output — roughly 750,000 tokens, several times an LLM context
+> window. Reference it by path only; a version bump is a re-download, never a
+> hand-edit. `claude/vendor/!READ-ME-FIRST.md` has the command.
+
+This is the **only directory symlink under `~/.claude`**, and the exception is
+about ownership rather than taste. `~/.claude` and `~/.claude/skills` are shared
+with Claude Code and its plugins, which is why everything else there is linked
+per file or per skill. Nothing but this repo writes to `~/.claude/vendor`, so the
+whole directory is ours — one link covers it, and a second bundle needs no change
+to `setup.sh`.
+
+**It has to be a classic `<script src>`, not an ESM `import`.** `PLAN.html` is
+opened from `file://`, where a module import fails with *"Failed to fetch
+dynamically imported module"* even for a local file — module fetches go through
+CORS, and `file://` origins are opaque. A plain `<script src>` is exempt and
+loads the same file fine. Verified in headless Chrome both ways: the ESM form
+rendered no SVG at all, the classic form renders one. A CDN URL is worse again —
+unreachable offline, and redundant once the file is vendored. A test asserts the
+template contains neither `cdn.jsdelivr.net` nor `type="module"`, because
+reverting this breaks every diagram *silently*: no error, the diagram source just
+sits on the page as text.
+
+`UI_TEMPLATE.html` writes the path as `{{VENDOR_DIR}}/mermaid.min.DO-NOT-READ.js`
+and the skill substitutes `{{VENDOR_DIR}}` with `$HOME/.claude/vendor`, expanded.
+Absolute, because `PLAN.html` is written into whatever repo you are planning in
+and HTML does not expand `~`. Only the **directory** is substituted — a
+whole-file placeholder invites an agent to go and inspect what it names.
 
 ### One caveat on `settings.json`
 
