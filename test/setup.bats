@@ -115,6 +115,8 @@ stub_brew() {
   cat >"$STUB_BIN/brew" <<'STUB'
 #!/bin/bash
 echo "$*" >>"$BREW_LOG"
+# BREW_LIST_OK makes `brew list` claim a hit, for the already-installed branch.
+[[ "$1" == list && -z "${BREW_LIST_OK:-}" ]] && exit 1
 [[ -e "$BREW_FAIL" ]] && exit 1
 exit 0
 STUB
@@ -1795,6 +1797,52 @@ EOF
 
   total=$(grep -E '^\s*#([^!]|$)' "$script" | grep -cvE '^\s*#\s*shellcheck')
   [ "$total" -le 10 ]
+}
+
+@test "setup_nerd_font is a no-op when the font is already installed" {
+  starship_env
+  stub_brew
+  export BREW_LIST_OK=1
+
+  bats_run setup_nerd_font
+  [ "$status" -eq 0 ]
+  [[ "$output" == ok:* ]]
+  ! grep -q '^install' "$BREW_LOG"
+}
+
+@test "setup_nerd_font fails with skip: when brew is missing" {
+  starship_env
+  [ ! -x "$STUB_BIN/brew" ]
+
+  bats_run setup_nerd_font
+  [ "$status" -ne 0 ]
+  [[ "$output" == skip:* ]]
+  [[ "$output" == *brew* ]]
+  [[ "$output" == *brew.sh* ]]
+}
+
+@test "setup_nerd_font brew-installs the cask when it is missing" {
+  starship_env
+  stub_brew
+
+  bats_run setup_nerd_font
+  [ "$status" -eq 0 ]
+  grep -q 'install.*font-meslo-lg-nerd-font' "$BREW_LOG"
+}
+
+@test "setup_nerd_font fails when brew install fails" {
+  starship_env
+  stub_brew
+  touch "$BREW_FAIL"
+
+  bats_run setup_nerd_font
+  [ "$status" -ne 0 ]
+  grep -q 'install.*font-meslo-lg-nerd-font' "$BREW_LOG"
+}
+
+@test "the prompt's powerline glyphs have a font that can draw them" {
+  grep -q 'setup_nerd_font' "${BATS_TEST_DIRNAME}/../setup.sh"
+  grep -q 'run "nerd-font" setup_nerd_font' "${BATS_TEST_DIRNAME}/../setup.sh"
 }
 
 PROMPT_STATES="non-git"
