@@ -1,46 +1,39 @@
+# Starship configured to render the prompt this repo has always had.
+#
+# Joiners are owned by the segment BEFORE the boundary, drawn in its own colour
+# over the next segment's background: "[](fg:<my bg> bg:<next bg>)". A
+# segment that vanishes takes its arrow with it, so no stale arrow is stranded
+# in a colour whose segment is gone -- the bug this shape exists to avoid.
+#
+# The cost is that a joiner names the background of what FOLLOWS it, so
+# reordering the format string means revisiting those bg: values.
+#
+# test/expected-prompts/ is the spec for all of this; test/check-prompt.sh
+# compares against it.
+
 format = """\
-$status\
-$jobs\
-$sudo\
-$conda\
-$python\
-$aws\
 $directory\
-$git_branch\
-$git_status\
-$git_state\
-$character\
+${custom.cap_plain}\
 """
-
-[status]
-disabled = false
-format = "[](fg:black)[$symbol$status](bg:black fg:red)[](fg:black)"
-
-[jobs]
-format = "[](fg:black)[⚙](bg:black fg:cyan)[](fg:black)"
-
-[sudo]
-disabled = false
-format = "[](fg:black)[⚡](bg:black fg:yellow)[](fg:black)"
-
-[python]
-format = "[](fg:blue)[($virtualenv)](bg:blue fg:black)[](fg:blue)"
-
-[conda]
-format = "[](fg:magenta)[🐍 $environment](bg:magenta fg:black)[](fg:magenta)"
-
-[aws]
-format = "[](fg:green)[AWS: $profile](bg:green fg:black)[](fg:green)"
+add_newline = false
 
 [directory]
-format = "[](fg:blue)[$path](bg:blue fg:black)[](fg:blue)"
-truncation_length = 4
+format = "[ $path ](bg:blue fg:black)"
+truncation_length = 0
+truncate_to_repo = false
 
-[git_branch]
-format = "[](fg:green)[$branch](bg:green fg:black)[](fg:green)"
+# The cap that closes the bar. It is a custom module rather than part of
+# [directory] because what ends the prompt varies: outside a repository the
+# directory is last, but inside one a branch segment follows it. No module can
+# read its predecessor's colour, so an unconditional cap in [directory] would
+# double-draw once anything is appended after it.
+#
+# `shell` is pinned to a bare bash: without it starship runs the predicate under
+# the login shell, which would source the user's rc files on every prompt.
+[custom.cap_plain]
+when = "! git rev-parse --is-inside-work-tree >/dev/null 2>&1"
+format = "[](fg:blue)"
+shell = ["bash", "--noprofile", "--norc"]
 
-[git_status]
-format = "[](fg:yellow)[$all_status$ahead_behind](bg:yellow fg:black)[](fg:yellow)"
-
-[git_state]
-format = "[](fg:yellow)[$state](bg:yellow fg:black)[](fg:yellow)"
+[character]
+disabled = true
