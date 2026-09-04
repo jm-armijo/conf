@@ -67,6 +67,25 @@ setup_starship() {
   echo "starship: installed (restart your shell to apply)"
 }
 
+# The prompt's joiners are private-use glyphs; without a patched font they
+# render as tofu boxes.
+setup_nerd_font() {
+  local cask="font-meslo-lg-nerd-font"
+
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "skip: brew not installed — see https://brew.sh, then re-run"
+    return 1
+  fi
+
+  if brew list --cask "$cask" >/dev/null 2>&1; then
+    echo "ok:   $cask already installed"
+    return 0
+  fi
+
+  brew install --cask "$cask" || return 1
+  echo "nerd-font: installed (set your terminal font to MesloLGS Nerd Font)"
+}
+
 # Separate from setup_starship so the config still lands when brew is skipped or fails.
 setup_starship_config() {
   link "$REPO_DIR/starship/starship.toml" "$HOME/.config/starship.toml"
@@ -159,6 +178,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run "zsh" setup_zsh
   run "starship" setup_starship
   run "starship-config" setup_starship_config
+  run "nerd-font" setup_nerd_font
   run "git" setup_git
   run "ghostty" setup_ghostty
   run "magnet" setup_magnet
