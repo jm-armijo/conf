@@ -1,46 +1,26 @@
+# test/expected-prompts/ is the spec; test/check_prompt.rb compares against it.
+#
+# Joiners are owned by the segment BEFORE the boundary, drawn in its own colour
+# over the next segment's background. A segment that vanishes takes its arrow
+# with it, so no arrow is stranded in the colour of a segment that is gone.
+
 format = """\
-$status\
-$jobs\
-$sudo\
-$conda\
-$python\
-$aws\
 $directory\
-$git_branch\
-$git_status\
-$git_state\
-$character\
+${custom.directory_terminator}\
 """
-
-[status]
-disabled = false
-format = "[](fg:black)[$symbol$status](bg:black fg:red)[](fg:black)"
-
-[jobs]
-format = "[](fg:black)[⚙](bg:black fg:cyan)[](fg:black)"
-
-[sudo]
-disabled = false
-format = "[](fg:black)[⚡](bg:black fg:yellow)[](fg:black)"
-
-[python]
-format = "[](fg:blue)[($virtualenv)](bg:blue fg:black)[](fg:blue)"
-
-[conda]
-format = "[](fg:magenta)[🐍 $environment](bg:magenta fg:black)[](fg:magenta)"
-
-[aws]
-format = "[](fg:green)[AWS: $profile](bg:green fg:black)[](fg:green)"
+add_newline = false
 
 [directory]
-format = "[](fg:blue)[$path](bg:blue fg:black)[](fg:blue)"
-truncation_length = 4
+format = "[ $path ](bg:blue fg:black)"
+truncation_length = 0
+truncate_to_repo = false
 
-[git_branch]
-format = "[](fg:green)[$branch](bg:green fg:black)[](fg:green)"
+# Not part of [directory]: inside a repository a branch segment follows it and
+# draws its own cap, so an unconditional one here would double-draw.
+[custom.directory_terminator]
+when = "! git rev-parse --is-inside-work-tree >/dev/null 2>&1"
+format = "[](fg:blue)"
+shell = ["bash", "--noprofile", "--norc"]
 
-[git_status]
-format = "[](fg:yellow)[$all_status$ahead_behind](bg:yellow fg:black)[](fg:yellow)"
-
-[git_state]
-format = "[](fg:yellow)[$state](bg:yellow fg:black)[](fg:yellow)"
+[character]
+disabled = true
