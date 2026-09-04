@@ -1,11 +1,5 @@
-# Expected colour-transition sequence for the 'non-git' prompt state.
-#
-# Outside a repo: one segment, then the closing arrow.
-#
-# THIS FILE IS THE SPEC. Nothing re-derives it at test time. To change how
-# the prompt looks, edit this file and starship.toml in the same commit.
-#
+# THIS FILE IS THE SPEC. To change how the prompt looks, edit this file and
+# starship.toml in the same commit.
 # Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
-# Format: fg=<0-7|None> bg=<0-7|None> <python-repr of the visible text>
 fg=0 bg=4 ' /tmp '
 fg=4 bg=None ''

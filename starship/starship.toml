@@ -1,19 +1,12 @@
-# Starship configured to render the prompt this repo has always had.
+# test/expected-prompts/ is the spec; test/check_prompt.rb compares against it.
 #
 # Joiners are owned by the segment BEFORE the boundary, drawn in its own colour
-# over the next segment's background: "[](fg:<my bg> bg:<next bg>)". A
-# segment that vanishes takes its arrow with it, so no stale arrow is stranded
-# in a colour whose segment is gone -- the bug this shape exists to avoid.
-#
-# The cost is that a joiner names the background of what FOLLOWS it, so
-# reordering the format string means revisiting those bg: values.
-#
-# test/expected-prompts/ is the spec for all of this; test/check-prompt.sh
-# compares against it.
+# over the next segment's background. A segment that vanishes takes its arrow
+# with it, so no arrow is stranded in the colour of a segment that is gone.
 
 format = """\
 $directory\
-${custom.cap_plain}\
+${custom.directory_terminator}\
 """
 add_newline = false
 
@@ -22,15 +15,9 @@ format = "[ $path ](bg:blue fg:black)"
 truncation_length = 0
 truncate_to_repo = false
 
-# The cap that closes the bar. It is a custom module rather than part of
-# [directory] because what ends the prompt varies: outside a repository the
-# directory is last, but inside one a branch segment follows it. No module can
-# read its predecessor's colour, so an unconditional cap in [directory] would
-# double-draw once anything is appended after it.
-#
-# `shell` is pinned to a bare bash: without it starship runs the predicate under
-# the login shell, which would source the user's rc files on every prompt.
-[custom.cap_plain]
+# Not part of [directory]: inside a repository a branch segment follows it and
+# draws its own cap, so an unconditional one here would double-draw.
+[custom.directory_terminator]
 when = "! git rev-parse --is-inside-work-tree >/dev/null 2>&1"
 format = "[](fg:blue)"
 shell = ["bash", "--noprofile", "--norc"]

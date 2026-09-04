@@ -1821,24 +1821,21 @@ PROMPT_STATES="non-git"
 }
 
 @test "no tracked test executes agnoster" {
-  # THE decoupling invariant. A comparator that runs the theme would pin the
-  # prompt to it forever and make zsh/agnoster.zsh-theme undeletable.
-  # The theme may be NAMED (provenance headers, comments). It must never be RUN,
-  # so the pattern targets sourcing and invoking, not the bare word.
+  # A comparator that ran the theme would pin the prompt to it forever. Naming
+  # it is fine; the pattern targets sourcing and invoking, not the bare word.
   bats_run grep -rnE '(source|^|[;&|[:space:]])(\.|zsh|bash)[[:space:]][^|]*agnoster' \
     "${BATS_TEST_DIRNAME}"
   [ "$status" -ne 0 ]
 }
 
 @test "the prompt spec does not depend on the agnoster theme being present" {
-  # Moves the theme aside and re-runs the check: a hidden dependency fails here.
   local theme moved
   theme="${BATS_TEST_DIRNAME}/../zsh/agnoster.zsh-theme"
   moved="${BATS_TEST_TMPDIR}/agnoster.moved"
   [ -f "$theme" ]
 
   mv "$theme" "$moved"
-  bats_run "${BATS_TEST_DIRNAME}/check-prompt.sh" non-git
+  bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" non-git
   mv "$moved" "$theme"
 
   [ "$status" -eq 0 ]
@@ -1851,15 +1848,14 @@ PROMPT_STATES="non-git"
   mkdir -p "$tmp"
   sed 's/bg=4/bg=6/' "$dir/non-git" >"$tmp/non-git"
 
-  PROMPT_EXPECTED_DIR="$tmp" bats_run "${BATS_TEST_DIRNAME}/check-prompt.sh" non-git
+  PROMPT_EXPECTED_DIR="$tmp" bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" non-git
   [ "$status" -ne 0 ]
-  # A bare "differs" is useless at 3am; the failing line must be shown.
   [[ "$output" == *"bg=6"* ]]
   [[ "$output" == *"bg=4"* ]]
 }
 
 @test "check-prompt fails on an unknown state rather than passing vacuously" {
-  bats_run "${BATS_TEST_DIRNAME}/check-prompt.sh" no-such-state
+  bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" no-such-state
   [ "$status" -ne 0 ]
   [[ "$output" == *"no-such-state"* ]]
 }
@@ -1867,7 +1863,7 @@ PROMPT_STATES="non-git"
 @test "check-prompt matches the committed expectation for every state" {
   local state
   for state in $PROMPT_STATES; do
-    bats_run "${BATS_TEST_DIRNAME}/check-prompt.sh" "$state"
+    bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" "$state"
     [ "$status" -eq 0 ] || {
       echo "state $state: $output" >&2
       return 1
