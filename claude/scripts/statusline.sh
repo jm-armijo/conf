@@ -1,102 +1,58 @@
 #!/bin/bash
-# Claude Code discards the WHOLE statusline if this command writes a single byte
-# to stderr. Individual call sites are guarded too, but this is the structural
-# backstop: any future command added below cannot silently kill the statusline.
-# Set STATUSLINE_DEBUG=1 to unmute stderr when diagnosing.
+# Claude Code discards the WHOLE statusline if this writes one byte to stderr.
+# STATUSLINE_DEBUG=1 unmutes it for diagnosis.
 [ -z "${STATUSLINE_DEBUG:-}" ] && exec 2>/dev/null
 
 input=$(cat)
 
-# ANSI Colour Codes
 CYAN=$'\033[36m'
 YELLOW=$'\033[33m'
-# GREEN is used ONLY for a clean-tree branch. Every PALETTE background is
-# filtered for contrast against both this and YELLOW -- see the PALETTE comment.
+# Clean-tree branch only. Every PALETTE background is filtered to clear a 3.0
+# contrast ratio against this green and the dirty-tree yellow, which are fixed
+# theme colours (#1cd915 / #d9bd26) rather than computed -- so a regenerated
+# palette must be scored against those, not against xterm's defaults.
 GREEN=$'\033[32m'
 PURPLE=$'\033[35m'
 BLUE=$'\033[34m'
 RED=$'\033[31m'
 RESET=$'\033[0m'
 
-# Context-window constants, read from context-window.conf.
-#
-# NOT statusline.conf, and the split is deliberate. statusline.conf holds this
-# script's own DISPLAY tunables -- how long a colour assignment lives, where the
-# colour database sits. These two are a different kind of thing entirely: they
-# describe when CLAUDE CODE ITSELF auto-compacts. The statusline only reads them
-# so it can draw the gauge against the right scale; it does not own that
-# behaviour and cannot influence it. Anything else that needs to reason about
-# the compaction threshold -- a hook, some other script -- reads the same file.
-#
-# Sourced DIRECTLY rather than by way of session-colors.sh: that library is
-# sourced much further down, only when a colour is actually wanted, and is
-# skipped outright when unreadable. These values are needed before any of that.
-#
-# Every value has an inline default below, so a missing, unreadable, or
-# half-written conf leaves the statusline working -- the same contract
-# session-colors.sh keeps for its own settings.
+# In context-window.conf, not statusline.conf: these describe when Claude Code
+# itself compacts, not how this script displays. Sourced directly rather than via
+# session-colors.sh, which is sourced far later and skipped when unreadable.
 CLAUDE_CONTEXT_CONF="${CLAUDE_CONTEXT_CONF:-$HOME/.claude/context-window.conf}"
 # shellcheck source=/dev/null
 [ -r "$CLAUDE_CONTEXT_CONF" ] && . "$CLAUDE_CONTEXT_CONF" 2>/dev/null
 
 : "${CTX_MAX:=200000}"
-# 33000 is EMPIRICALLY DERIVED, not documented by Anthropic. Measured across 93
-# compact_boundary records in ~/.claude/projects/*/*.jsonl, "200000 - preTokens"
-# fell in a tight 32852..33273 band. It is an ABSOLUTE output budget rather than
-# a fraction of the window: the changelog puts Sonnet's compaction on a 1M
-# window "at about 967K", the same ~33000 held back at five times the size.
-#
-# To re-measure if compaction behaviour drifts, take the token count recorded
-# immediately before each compact_boundary and subtract it from that session's
-# window:
-#   jq -r 'select(.type=="compact_boundary")
-#          | .compactMetadata.preTokens' ~/.claude/projects/*/*.jsonl
+# Empirical, not documented by Anthropic, and an ABSOLUTE budget rather than a
+# fraction of the window. context-window.conf carries the jq to re-measure it.
 : "${CTX_RESERVE:=33000}"
 
-# A conf typo must not reach the arithmetic below: $((CTX_MAX - CTX_RESERVE))
-# on a bare word either errors to stderr -- which makes Claude Code discard the
-# whole statusline -- or silently evaluates it as 0. Empty, non-numeric, and
-# negative all land here; the pattern rejects a leading "-" as a non-digit.
+# A typo must not reach the arithmetic below: it would error to stderr, or read 0.
 case "$CTX_MAX" in '' | *[!0-9]*) CTX_MAX=200000 ;; esac
 case "$CTX_RESERVE" in '' | *[!0-9]*) CTX_RESERVE=33000 ;; esac
 
 MODEL=$(echo "$input" | jq -r '.model.display_name // "Opus"' 2>/dev/null)
 [ -z "$MODEL" ] && MODEL="Opus"
 
-# PRIMARY token source: the payload's context_window object, emitted since CLI
-# v2.1.251. total_input_tokens is input + cache_creation + cache_read and
-# EXCLUDES output, which is exactly the basis the compaction check uses -- so it
-# is the number the threshold is actually compared against, not an approximation
-# of it.
-#
-# The sibling used_percentage field is deliberately NOT used. It divides by the
-# RAW window, so it reads ~83.5 at the instant compaction fires; adopting it
-# would reintroduce the very bug this scaling exists to fix.
-#
-# Both members are read with a `// empty` guard because the object is present
-# but NULL-valued at the very start of a session, before the first request has
-# been made.
+# Primary token source. total_input_tokens excludes output, the same basis the
+# compaction check uses. The sibling used_percentage divides by the RAW window
+# and reads ~83.5 when compaction fires -- it is the bug this scaling fixes.
+# `// empty` because the object is present but null at session start.
 CW_TOK=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty' 2>/dev/null)
 CW_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // empty' 2>/dev/null)
 case "$CW_TOK" in '' | *[!0-9]*) CW_TOK="" ;; esac
 case "$CW_SIZE" in '' | *[!0-9]*) CW_SIZE="" ;; esac
 
-# The reported window is a MINIMUM against CTX_MAX, never an override: an
-# extended-context session reports 1000000, but settings.json's autoCompactWindow
-# can cap the effective window below the model's native size, and CTX_MAX is
-# where that cap is recorded. Taking the smaller of the two honours both -- a
-# genuinely smaller session window is respected, a larger one is clamped.
+# A MINIMUM against CTX_MAX, never an override: autoCompactWindow can cap the
+# effective window below the model's native size, and CTX_MAX records that cap.
 [ -n "$CW_SIZE" ] && [ "$CW_SIZE" -lt "$CTX_MAX" ] && CTX_MAX=$CW_SIZE
 
-# FALLBACK token source, for a CLI predating context_window and for the null
-# window at the start of a session. Derived from the session transcript: sum the
-# last non-sidechain assistant usage block, where
-# input + cache_read + cache_creation + output == live context occupancy.
-# Sidechain entries are subagent turns and do not consume main-thread context.
-#
-# It includes output_tokens, which context_window's basis does not, so the two
-# do not agree exactly -- measured within 0.2-2% of the CLI's own preTokens,
-# which is why it stays as the fallback rather than the primary.
+# FALLBACK, for a CLI predating context_window and the null window at session
+# start. Sidechain entries are subagent turns and do not consume main-thread
+# context. This basis includes output_tokens where context_window's does not, so
+# the two agree only within 0.2-2% -- hence fallback, not primary.
 TRANSCRIPT=$(echo "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
 TOK_RAW=0
 if [ -n "$CW_TOK" ]; then
@@ -112,27 +68,14 @@ elif [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
                | map(. // 0) | add
           end' "$TRANSCRIPT" 2>/dev/null)
 fi
-# Guard against jq failure / non-numeric output
 case "$TOK_RAW" in '' | *[!0-9]*) TOK_RAW=0 ;; esac
 
 TOK_K=$(awk -v t="$TOK_RAW" 'BEGIN {printf "%.1fk", t/1000}')
 
-# ctx: % of context window consumed; turns RED past 80%
-#
-# The denominator is the USABLE window, not the raw one. Claude Code
-# auto-compacts once the input token count reaches CTX_MAX - CTX_RESERVE, so
-# THAT point -- not the raw ceiling -- is what "full" means to the user.
-# Dividing by CTX_MAX read only ~84% at the instant compaction fired, showing
-# roughly a seventh of the bar as headroom that did not exist.
-#
-# Clamped at 100 rather than left to overshoot: compaction is not instantaneous
-# and a single large turn can cross the threshold before it fires, so tokens
-# above the usable window are a REAL state that must saturate the gauge instead
-# of printing "ctx:120%".
-#
-# CTX_USABLE going non-positive is a misconfiguration (a reserve at or above the
-# window), not an arithmetic accident. It reads 0% rather than dividing by zero,
-# which awk would render as "inf" or "nan" straight into the statusline.
+# The denominator is the USABLE window: Claude Code compacts at CTX_MAX -
+# CTX_RESERVE, so that point is what "full" means. Clamped at 100 because a
+# large turn can cross the threshold before compaction fires. A non-positive
+# CTX_USABLE reads 0% rather than letting awk print "inf" into the statusline.
 CTX_USABLE=$((CTX_MAX - CTX_RESERVE))
 CTX_PCT=$(awk -v u="$TOK_RAW" -v m="$CTX_USABLE" 'BEGIN {
     p = (m > 0) ? (u / m * 100) : 0
@@ -142,54 +85,24 @@ CTX_PCT=$(awk -v u="$TOK_RAW" -v m="$CTX_USABLE" 'BEGIN {
 CTX_COL=$YELLOW
 [ "$CTX_PCT" -ge 80 ] && CTX_COL=$RED
 
-# Working directory: the statusline payload carries it under workspace.current_dir.
-# Fall back to .cwd, then to $PWD, so the segment never renders empty.
 DIR_RAW=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty' 2>/dev/null)
 [ -z "$DIR_RAW" ] && DIR_RAW=$PWD
-# Full path, with $HOME collapsed to ~ so a home-relative path stays readable.
 DIR=${DIR_RAW/#$HOME/\~}
 
-# Branch is resolved from DIR_RAW, not $PWD: the hook runs from wherever the
-# `claude` process was started, which is not necessarily the session's cwd.
-# --show-current is empty on a detached HEAD, so fall back to a short SHA.
+# From DIR_RAW, not $PWD: the hook runs from wherever `claude` was started.
 BRANCH=$(git -C "$DIR_RAW" branch --show-current 2>/dev/null)
 if [ -z "$BRANCH" ]; then
   BRANCH=$(git -C "$DIR_RAW" rev-parse --short HEAD 2>/dev/null)
 fi
-# Working-tree cleanliness, used to colour the branch segment. agnoster's rule:
-# DIRTY means any uncommitted change at all -- unstaged edits, staged edits, OR
-# untracked files. Unpushed commits do NOT count.
-#
-# `status --porcelain` prints one line per such change and nothing at all on a
-# clean tree, so non-empty output is exactly the dirty predicate. Untracked files
-# must be included, so the default --untracked-files=normal is what is wanted;
-# do NOT "optimise" this to -uno, which would silently change the semantics.
-#
-# stderr is redirected here as well as by the blanket exec: outside a repo this
-# prints "not a git repository", and a single stderr byte makes Claude Code
-# discard the entire statusline.
-#
-# Cost note: this runs on every refresh and refreshInterval is 1s. On a very
-# large working tree `status --porcelain` can take tens of ms; it is guarded by
-# the BRANCH check so it is skipped entirely outside a repo.
+# Dirty means any uncommitted change, untracked files included -- so the default
+# --untracked-files is required; -uno would silently narrow the predicate.
 DIRTY=""
 if [ -n "$BRANCH" ]; then
   [ -n "$(git -C "$DIR_RAW" status --porcelain 2>/dev/null)" ] && DIRTY=1
 fi
 
-# Session name. The payload key is "session_name", NOT "customTitle".
-# customTitle is the shape used in the session TRANSCRIPT (a record of
-# type "custom-title"); the statusline payload builder emits it as
-# `...sessionName && {session_name: sessionName}`, resolving the user-set title
-# first and the AI-generated one as a fallback. Reading .customTitle here always
-# yielded empty, which is why the segment was invisible -- it was never rendered
-# at all rather than rendered in an unreadable colour.
-#
-# Absent on a session with neither title, in which case the segment AND its
-# separator are dropped rather than rendering a placeholder.
-# Capped at TASK_MAX chars so a long title cannot shove the right-hand group
-# past the render width; the cut is by CHARACTER (cut -c is multibyte-aware
-# under a UTF-8 locale), never by byte, so a truncated title stays valid UTF-8.
+# The payload key is session_name; customTitle is the TRANSCRIPT's shape and
+# always reads empty here. Cut by character, never byte, to stay valid UTF-8.
 TASK=$(echo "$input" | jq -r '.session_name // .customTitle // empty' 2>/dev/null)
 TASK_MAX=30
 TASK_TEXT=""
@@ -197,16 +110,12 @@ if [ -n "$TASK" ]; then
   if [ "$(printf '%s' "$TASK" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -gt "$TASK_MAX" ]; then
     TASK=$(printf '%s' "$TASK" | LC_ALL=en_US.UTF-8 cut -c1-$((TASK_MAX - 1)))…
   fi
-  # Carries its own foreground so the segment is yellow regardless of what the
-  # branch segment before it set. A bare 3x with NO reset: a reset would drop
-  # the shared background too and punch a gap through the block.
+  # Bare 3x with NO reset -- a reset would drop the shared background too.
   TASK_TEXT="${YELLOW} | ${TASK}"
 fi
 
-# Empty when not in a repo at all -> the segment is omitted entirely below,
-# separator included. GREEN on a clean tree, YELLOW when dirty. The colour is
-# baked in here rather than applied in LEFT so that an absent branch contributes
-# no SGR at all, and so it cannot leak onto the task segment that follows.
+# Baked in here, not applied in LEFT, so an absent branch contributes no SGR at
+# all and cannot leak onto the task segment.
 BRANCH_TEXT=""
 if [ -n "$BRANCH" ]; then
   BRANCH_FG=$GREEN
@@ -215,21 +124,12 @@ if [ -n "$BRANCH" ]; then
 fi
 
 # ------------------------------------------------------------ header bar ----
-# A full-width context-usage gauge. The filled run is CTX_PCT of the bar width;
-# its colour is a per-cell gradient keyed on POSITION, green at the left edge
-# through to red at the right, so growing context reveals warmer colours instead
-# of recolouring the whole bar. Deliberately NOT hashed -- the bar means "how
-# full is the context", so it must read identically in every session.
+# Context-usage gauge. Colour is keyed on POSITION, not on CTX_PCT, and is
+# deliberately NOT hashed: the bar must read identically in every session.
 
-# Terminal width. This hook runs with NO controlling TTY: stdin is the JSON
-# payload, /dev/tty is unavailable, and bare `tput cols` therefore reports a
-# hardcoded 80 rather than the real width. The parent `claude` process does own
-# a TTY, so read the width from that first and keep the others as fallbacks.
-# Terminal width. $PPID is NOT usable: when Claude Code runs this hook the
-# immediate parent is a wrapper shell with no controlling terminal (tty "??"),
-# and bare `tput cols` then reports a hardcoded 80. The real `claude` process is
-# further up the tree and does own a TTY, so walk the ancestry and take the
-# width from the first ancestor that has one.
+# This hook has no controlling TTY, so bare `tput cols` reports a hardcoded 80.
+# $PPID is a wrapper shell with no TTY either -- walk the ancestry and take the
+# width from the first ancestor that owns one.
 COLS=${COLUMNS:-}
 probe=$PPID
 [ -n "$COLS" ] && probe=""
@@ -247,34 +147,17 @@ done
 case "$COLS" in '' | *[!0-9]*) COLS=80 ;; esac
 [ "$COLS" -lt 1 ] && COLS=80
 
-# The renderer does not give the hook the whole terminal: it indents the block
-# and reserves trailing columns (statusLine.padding = 1 is only part of it), and
-# a bar drawn at the true width overflows and is truncated with an ellipsis.
-# BAR_MARGIN is how many columns to hold back. Raise it if an ellipsis appears,
-# lower it to make the bar reach further.
+# The renderer reserves columns, so a bar at the true width is truncated with an
+# ellipsis. Raise BAR_MARGIN if one appears, lower it to make the bar reach further.
 BAR_MARGIN=${STATUSLINE_BAR_MARGIN:-12}
 COLS=$((COLS - BAR_MARGIN))
 [ "$COLS" -lt 1 ] && COLS=1
 
-# The palette lives in claude/lib/session-colors.sh as SESSION_COLOR_PALETTE
-# and is NOT duplicated here -- the library is sourced below, before anything
-# needs a colour, so both the database path and the hash fallback read the same
-# array. Changing the palette means editing that one list; see the comment
-# there for the contrast rule and the ordering constraint that govern it.
-#
-# A last-resort literal is declared AFTER the source below, for the case where
-# the library cannot be read at all. It is deliberately a few obviously-safe
-# darks rather than a copy of the real list: a stale duplicate that silently
-# disagreed would be worse than an obviously reduced one, and reaching it means
-# the install is already broken.
+# The palette is defined only in session-colors.sh, sourced below. The
+# last-resort literal after it is deliberately NOT a copy: a stale duplicate that
+# silently disagreed would be worse than an obviously reduced one.
 
-# The colour is RECORDED, not derived.
-#
-# Hashing the key into the palette could not guarantee two live sessions looked
-# different -- nothing detected a collision. So a directory+branch is assigned a
-# colour once, permanently, in a machine-local SQLite database, and reopening
-# that branch months later returns the same colour. See the library for the full
-# rationale and the assignment rule.
+# RECORDED, not derived: hashing could not guarantee two live sessions differed.
 SESSION_COLORS_LIB="${SESSION_COLORS_LIB:-$HOME/.claude/lib/session-colors.sh}"
 SEG_BG=""
 if [ -r "$SESSION_COLORS_LIB" ]; then
@@ -283,27 +166,17 @@ if [ -r "$SESSION_COLORS_LIB" ]; then
   SEG_BG=$(session_color_assign "$DIR_RAW" "$BRANCH" 2>/dev/null)
 fi
 
-# Only fires when the source above did not happen or did not define the array.
-# In the normal case this is a no-op and the hash fallback below uses the very
-# same list the database assigns from.
 if [ "${#SESSION_COLOR_PALETTE[@]}" -eq 0 ]; then
   SESSION_COLOR_PALETTE=(58 18 52 22)
 fi
 
-# Fall back to hashing whenever the database could not answer -- library absent,
-# sqlite3 missing, file corrupt, lock held past the timeout. A collision is a
-# far better outcome than an unpainted segment.
+# A hash collision is a far better outcome than an unpainted segment.
 case "$SEG_BG" in
   '' | *[!0-9]*)
     HASH_KEY="${DIR_RAW}${BRANCH}"
-    # Hash to hex, then take 8 chars (fits a 32-bit int with room to spare) and
-    # convert to base 10. 16#ABC is bash's base-N literal syntax.
-    #
-    # shasum is used rather than md5/md5sum because BOTH of those live only in
-    # /sbin on macOS, which is NOT on the PATH Claude Code gives this hook. The
-    # md5sum fallback therefore printed "command not found" to stderr, and the
-    # statusline is discarded when its command writes to stderr -- the whole
-    # line silently disappeared. shasum is in /usr/bin and always reachable.
+    # shasum, never md5/md5sum: those live only in /sbin, which is not on the
+    # PATH Claude Code gives this hook, and the resulting stderr byte would
+    # discard the statusline.
     HASH_HEX=$(printf '%s' "$HASH_KEY" | shasum 2>/dev/null | cut -d' ' -f1)
     [ -z "$HASH_HEX" ] && HASH_HEX=0
     HASH_HEX=${HASH_HEX:0:8}
@@ -312,8 +185,6 @@ case "$SEG_BG" in
     ;;
 esac
 
-# Fill length = CTX_PCT of the bar width. int() truncates, so the bar only shows
-# a full row at a true 100% and an empty one below half a column of usage.
 BAR_FILL=$(awk -v p="$CTX_PCT" -v n="$COLS" 'BEGIN {
     f = int(n * p / 100)
     if (f < 0) f = 0; if (f > n) f = n
@@ -321,78 +192,17 @@ BAR_FILL=$(awk -v p="$CTX_PCT" -v n="$COLS" 'BEGIN {
   }')
 BAR_REST=$((COLS - BAR_FILL))
 
-# One-eighth-height bar. A cell cannot be split vertically, so a background-
-# painted run of spaces is always a FULL row tall. Instead draw U+2594 UPPER ONE
-# EIGHTH BLOCK (▔) as FOREGROUND, leaving the cell background untouched: the
-# glyph inks only the top eighth of each cell, which is thinner than the U+2580
-# UPPER HALF BLOCK (▀) this replaced. Both are East-Asian-Width "Ambiguous", i.e.
-# single-column, and both are present in the installed Meslo faces. If U+2594
-# ever renders as tofu, ▀ is the drop-in fallback.
-#
-# Built by REPEAT COUNT, not by measuring length: awk's length() counts BYTES in
-# this locale and ▔ is 3 bytes, so a length-based loop truncated the final glyph
-# mid-sequence and produced invalid UTF-8.
+# U+2594 drawn as FOREGROUND: a background-painted cell is always a full row
+# tall. If it ever renders as tofu, ▀ (U+2580) is the drop-in fallback.
 BAR_GLYPH="▔"
 
-# The filled run is a GRADIENT, not a solid fill: each cell's colour is a
-# function of its POSITION along the bar, never of CTX_PCT. Cell i of n is
-# coloured at fraction i/(n-1), so the leftmost cell is always green and the
-# rightmost cell of a full bar is always red regardless of how full the bar
-# actually is. Growing context therefore extends the fill rightward and REVEALS
-# progressively warmer colours, instead of recolouring the whole bar at once.
+# The waypoints exist because a single green->red lerp desaturates to olive at
+# the midpoint. The 256-colour fallback is a hand-checked ladder, not a computed
+# nearest-cube match: the cube is not monotonic in hue, so a computed ramp
+# visibly backtracks.
 #
-# THE RAMP IS PIECEWISE-LINEAR THROUGH EXPLICIT WAYPOINTS, not a straight line
-# from green to red. Two reasons, and both are the point of the shape:
-#
-#  1. A single lerp green -> red passes through desaturated olive at the midpoint
-#     -- the two endpoints' channels cross over and cancel. The waypoints hold
-#     saturation >= 0.75 the whole way by routing through real yellow and orange.
-#  2. Position of the warning matters more than linearity. The stops put yellow
-#     at 35% and red-orange at 85%, so the bar stops reading as "green/fine"
-#     roughly a third of the way across. A linear ramp instead sat at pure green
-#     until ~30% and only reached yellow near 50%, which read as safe far too
-#     long.
-#
-# Stops (fraction -> rgb), interpolated linearly between neighbours:
-#   0.00  ( 60,200, 70)  green
-#   0.20  (150,205, 40)  yellow-green
-#   0.35  (225,210, 30)  yellow
-#   0.55  (245,175, 25)  amber
-#   0.70  (250,130, 20)  orange
-#   0.85  (240, 75, 30)  red-orange
-#   1.00  (215, 35, 35)  red
-# Hue falls monotonically 139deg -> 0deg across the bar; the largest per-cell
-# channel step on a 100-cell bar is 6/255, i.e. below the visible-banding floor.
-#
-# TWO OUTPUT PATHS, chosen by COLORTERM:
-#
-# * Truecolor (38;2;r;g;b) when COLORTERM is "truecolor" or "24bit". Every cell
-#   gets its own exact colour, so there is no banding at any width. This is the
-#   path that actually delivers smoothness -- the 6x6x6 cube physically cannot,
-#   see below.
-# * The ANSI-256 cube otherwise. The cube offers only 6 levels per channel, so a
-#   computed green->red diagonal yields SIX distinct codes across the whole bar
-#   -- ~17% of the width each, one hard jump per step. Worse, picking the nearest
-#   cube code per cell is not even monotonic in hue (166 sits at 27deg, between
-#   202 at 22deg and 160 at 0deg), so the ramp visibly backtracks. The fallback
-#   therefore uses a HAND-CHECKED ladder of 11 fully-saturated codes whose hue is
-#   strictly monotonic 120deg -> 0deg, indexed by position. It is coarser than
-#   truecolor by construction; that is the cube's limit, not a bug here.
-#
-# The colour is a pure function of (position, width): two different sessions or
-# directories at the same width produce a byte-identical bar. It encodes usage,
-# not identity, so it must NOT be hashed the way the segment block below is.
-#
-# Built by REPEAT COUNT inside awk, never by measuring length: awk's length()
-# counts BYTES in this locale and the glyph is 3 of them, so a length-based loop
-# sliced the final glyph mid-sequence and emitted invalid UTF-8. Consecutive
-# cells resolving to the same code still share one SGR sequence -- that collapses
-# the fallback path to a handful of escapes, and is a no-op on the truecolor path
-# where practically every cell differs.
-#
-# NOTE for anything downstream: the bar carries many more escape sequences than a
-# solid fill did. Its width must be measured with SGR stripped and counted in
-# CHARACTERS (vis_width below), never by the raw string's byte or char length.
+# Built by repeat count, never by measuring: awk's length() counts BYTES here and
+# the glyph is 3, so a length-based loop emits invalid UTF-8.
 case "${COLORTERM:-}" in
   truecolor | 24bit) BAR_TRUECOLOR=1 ;;
   *) BAR_TRUECOLOR=0 ;;
@@ -400,23 +210,19 @@ esac
 
 bar_gradient() { # <fill> <total>
   awk -v fill="$1" -v n="$2" -v ch="$BAR_GLYPH" -v tc="$BAR_TRUECOLOR" 'BEGIN {
-    # Waypoints, parallel arrays: sf[] fraction, sr/sg/sb[] channels.
     ns = split("0 0.20 0.35 0.55 0.70 0.85 1", sf, " ")
     split("60 150 225 245 250 240 215", sr, " ")
     split("200 205 210 175 130  75  35", sg, " ")
     split("70   40  30  25  20  30  35", sb, " ")
 
-    # Hand-checked monotonic cube ladder for the non-truecolor path.
     nc = split("40 76 112 148 184 220 214 208 202 196 160", cube, " ")
 
     prev = ""
     for (i = 0; i < fill; i++) {
-      # Guard n==1: a one-cell bar has no span to interpolate over, so it takes
-      # the green end rather than dividing by zero.
+      # A one-cell bar has no span to interpolate over.
       f = (n > 1) ? i / (n - 1) : 0
 
       if (tc == 1) {
-        # Locate the segment holding f, then lerp within it.
         for (k = 1; k < ns && sf[k + 1] < f; k++) { }
         span = sf[k + 1] - sf[k]
         t = (span > 0) ? (f - sf[k]) / span : 0
@@ -435,9 +241,7 @@ bar_gradient() { # <fill> <total>
   }'
 }
 
-# The unfilled remainder stays visible as a dim track (grey 238) rather than
-# going blank, so the bar's full extent -- and therefore the scale the fill is
-# read against -- is always on screen.
+# A dim track, not blank, so the scale the fill is read against stays on screen.
 bar_track() { # <count>
   awk -v n="$1" -v ch="$BAR_GLYPH" 'BEGIN { for (i = 0; i < n; i++) printf "%s", ch }'
 }
@@ -455,37 +259,16 @@ MEM=$(awk -v mem="${mem_kb:-0}" 'BEGIN {
 }')
 
 # ----------------------------------------------------------- metrics line ----
-# Two groups: LEFT pinned to column 1, RIGHT flush against column $COLS -- the
-# same width the bar was drawn at, so both lines terminate on the same column.
-#
-# dir/branch/task share ONE background so they read as a single continuous block
-# rather than three tinted chips. Only the FOREGROUND is switched between them,
-# with a bare 38;5;N -- never a RESET, which would drop the background too and
-# punch unpainted gaps through the block at every separator. The single RESET
-# goes at the very END of the run. It is load-bearing for more than looks:
-# without it the background bleeds through the pad, the whole RIGHT group, and on
-# to the next terminal line.
-#
-# The foregrounds are FIXED, not computed from the background: every PALETTE
-# entry is filtered to clear a 3.0 contrast ratio against both of them (see the
-# PALETTE comment), which is what makes a fixed choice safe here.
-#   dir    -> yellow
-#   branch -> GREEN when the working tree is clean, YELLOW when it is dirty
-#   task   -> yellow
-# BRANCH_TEXT/TASK_TEXT carry their own leading SGR and are empty when the
-# segment is absent, so an omitted segment contributes no cells at all -- not
-# even a stray colour change -- and cannot leave a coloured gap behind.
+# dir/branch/task share ONE background: separators switch only the foreground,
+# because a RESET between them would punch gaps through the block. The single
+# RESET at the END is load-bearing -- without it the background bleeds on to the
+# next terminal line.
 SEG_BG_SGR=$'\033'"[48;5;${SEG_BG}m"
 LEFT="${SEG_BG_SGR}${YELLOW}${DIR}${BRANCH_TEXT}${TASK_TEXT}${RESET}"
 RIGHT="${CYAN}${MODEL}${RESET} | ${CTX_COL}ctx:${CTX_PCT}%${RESET} | ${CYAN}${TOK_K} tok${RESET} | ${PURPLE}${TIME}${RESET} | ${BLUE}cpu:${CPU} mem:${MEM}${RESET}"
 
-# Visible width = the string with ANSI SGR sequences stripped, counted in
-# CHARACTERS. Both halves matter:
-#   - the sed strips \033[...m so colour codes are not billed as columns;
-#   - `wc -m` under a UTF-8 locale counts characters, whereas awk's length()
-#     counts BYTES in this locale and would over-count the 3-byte branch glyph
-#     () and any non-ASCII path or title, shrinking the pad and pushing the
-#     right group left of the bar's edge.
+# SGR stripped, then counted in CHARACTERS: `wc -m`, never awk's length(), which
+# counts BYTES here and would over-count the branch glyph and any non-ASCII path.
 vis_width() {
   printf '%s' "$1" | sed $'s/\033\\[[0-9;]*m//g' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '
 }
@@ -493,21 +276,12 @@ vis_width() {
 RIGHT_W=$(vis_width "$RIGHT")
 PAD=$((COLS - $(vis_width "$LEFT") - RIGHT_W))
 
-# PAD going negative is the overflow signal: the two groups together are wider
-# than the bar. Rather than let the metrics run past the bar's edge, wrap RIGHT
-# onto its own line -- 2 total lines when it fits, 3 when it does not.
-#
-# The flip has no hysteresis and cannot have any: the script is stateless and
-# re-run from scratch on every refresh, so there is nowhere to remember the
-# previous layout. It will therefore toggle between 2 and 3 lines at the exact
-# boundary column while the terminal is being resized. That is accepted.
+# A negative PAD is the overflow signal: wrap RIGHT onto its own line. The flip
+# cannot have hysteresis -- the script is stateless -- so it toggles between 2
+# and 3 lines at the boundary column during a resize. Accepted.
 if [ "$PAD" -lt 0 ]; then
-  # Wrapped RIGHT is RIGHT-ALIGNED: padded out to $COLS so it stays flush
-  # against the same edge the bar ends on. Clamped >= 0 because printf reads a
-  # NEGATIVE "%*s" width as a left-justify flag and silently emits nothing --
-  # which would leave the group unaligned instead of erroring. When RIGHT alone
-  # is wider than the bar there is no alignment to be had, so it starts at
-  # column 1 and is allowed to run over.
+  # Clamped >= 0: printf reads a NEGATIVE "%*s" width as a left-justify flag and
+  # silently emits nothing, leaving the group unaligned instead of erroring.
   WRAP_PAD=$((COLS - RIGHT_W))
   [ "$WRAP_PAD" -lt 0 ] && WRAP_PAD=0
   # Segments go through %s, never %b: the colour variables hold real ESC bytes

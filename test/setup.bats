@@ -1716,3 +1716,60 @@ EOF
   total=$(grep -E '^\s*#([^!]|$)' "$script" | grep -cvE '^\s*#\s*shellcheck')
   [ "$total" -le 25 ]
 }
+
+@test "statusline.sh keeps a one-line why for each trap still live in its code" {
+  # These are the comments whose facts the code cannot state for itself: a
+  # constraint is enforced somewhere else, or the obvious alternative is the
+  # wrong one. Their tests catch a behaviour change but not a comment deletion.
+  local script total
+  script="${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh"
+
+  # Each grep anchors on the phrase carrying the fact, never a bare keyword.
+  # "stderr", "byte" and "compact" all recur in unrelated comments here, so a
+  # keyword match stays green with its target deleted -- vacuous, and the exact
+  # failure the sibling test above warns about.
+  #
+  # One stderr byte discards the whole statusline -- the reason fd 2 is muted.
+  grep -qE '^\s*#.*discards the WHOLE statusline' "$script"
+  # The gauge divides by the compact point, not the raw window.
+  grep -qE '^\s*#.*denominator is the USABLE window' "$script"
+  # used_percentage looks like the field to use and is the bug.
+  grep -qE '^\s*#.*used_percentage' "$script"
+  # awk length() counts bytes, so the bar is built by repeat count.
+  grep -qE '^\s*#.*length\(\) counts BYTES' "$script"
+  # The palette is filtered for contrast against these two foregrounds. The rule
+  # is enforced in awk in this suite; the code must still state that it exists.
+  grep -qE '^\s*#.*contrast' "$script"
+  # -uno would silently change the dirty predicate.
+  grep -qE '^\s*#.*untracked' "$script"
+  # The payload key is session_name; customTitle is the transcript's shape.
+  grep -qE '^\s*#.*customTitle' "$script"
+
+  # Essential only: the file must not drift back to explaining itself. Prose
+  # only -- the shebang and shellcheck directives are not explanations.
+  #
+  # A budget of 80 against 176 lines of code, where session-colors.sh is capped
+  # at 25 against 68. The looser cap is the file, not a softer standard: this one
+  # carries two awk programs and a gradient whose constraints (byte-counting
+  # length(), the cube's non-monotonic hue, printf's negative-width flag) are
+  # invisible at the call site. Trimmed from 305 by this measure.
+  total=$(grep -E '^\s*#([^!]|$)' "$script" | grep -cvE '^\s*#\s*shellcheck')
+  [ "$total" -le 80 ]
+}
+
+@test "the bash hook states its exit contract and the heredoc ordering" {
+  # Both are facts the code cannot show: the exit codes mean something only to
+  # Claude Code, and "this guard must precede every rule" is an ordering
+  # constraint that looks like an ordinary early return.
+  local script total
+  script="${BATS_TEST_DIRNAME}/../claude/hooks/block-inefficient-bash.sh"
+
+  grep -qiE '^\s*#.*exit 2' "$script"
+  grep -qE '^\s*#.*heredoc' "$script"
+  # macOS /bin/bash is 3.2. The file reads as ordinary style, so the constraint
+  # has to be written down: ${cmd,,} is the obvious next edit and a syntax error.
+  grep -qE '^\s*#.*3\.2' "$script"
+
+  total=$(grep -E '^\s*#([^!]|$)' "$script" | grep -cvE '^\s*#\s*shellcheck')
+  [ "$total" -le 10 ]
+}
