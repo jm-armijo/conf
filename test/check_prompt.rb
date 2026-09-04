@@ -77,6 +77,8 @@ class Sequence
 end
 
 class Fixture
+  BRANCH = 'master'
+
   def initialize(state, root)
     @state = state
     @root = root
@@ -86,6 +88,26 @@ class Fixture
     # non-git exists to show the prompt outside a repository, and /tmp reliably
     # is not one. Nothing is written there, so only this state is non-hermetic.
     @state == 'non-git' ? '/tmp' : File.join(@root, 'home', 'code', 'conf')
+  end
+
+  def build
+    return self if @state == 'non-git'
+
+    FileUtils.mkdir_p(directory)
+    git 'init', '--initial-branch', BRANCH
+    git 'commit', '--allow-empty', '--message', 'root'
+    self
+  end
+
+  private
+
+  def git(*arguments)
+    # Repository-level identity keeps the fixture off the machine's git config,
+    # which may set neither name nor email and would abort the commit.
+    environment = { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
+                    'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com' }
+    system(environment, 'git', '-C', directory, *arguments,
+           out: File::NULL, err: File::NULL) || raise("git #{arguments.first} failed")
   end
 end
 
@@ -171,7 +193,7 @@ class Comparison
 
   def actual
     @actual ||= Dir.mktmpdir do |root|
-      fixture = Fixture.new(@state, root)
+      fixture = Fixture.new(@state, root).build
       Prompt.new(fixture, root).runs.map(&:to_s)
     end
   end
