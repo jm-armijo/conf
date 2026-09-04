@@ -215,7 +215,7 @@ claude_env() {
   echo "// not the real bundle" >"$REPO_DIR/claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js"
 
   local skill
-  for skill in bug-fixing clean-code development plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing task-status ui-separation; do
     mkdir -p "$REPO_DIR/claude/skills/$skill"
     echo "# $skill" >"$REPO_DIR/claude/skills/$skill/SKILL.md"
   done
@@ -293,7 +293,7 @@ claude_env() {
   [ "$status" -eq 0 ]
 
   local skill
-  for skill in bug-fixing clean-code development plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing task-status ui-separation; do
     [ -L "$HOME/.claude/skills/$skill" ]
     [ "$(readlink "$HOME/.claude/skills/$skill")" = "$REPO_DIR/claude/skills/$skill" ]
     [ "$(cat "$HOME/.claude/skills/$skill/SKILL.md")" = "# $skill" ]
@@ -647,9 +647,32 @@ plan_hook() {
 
 @test "every skill setup_claude_skills links has a SKILL.md" {
   local skill
-  for skill in bug-fixing clean-code development plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing task-status ui-separation; do
     [ -f "${BATS_TEST_DIRNAME}/../claude/skills/$skill/SKILL.md" ]
   done
+}
+
+@test "task-status warns that TODO.md is untracked but present" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/task-status/SKILL.md"
+
+  # The exclusion mechanism by name: .gitignore never mentions TODO.md, so a reader
+  # looking there concludes the file is absent when it is merely uncommitted.
+  grep -q '\.git/info/exclude' "$skill"
+
+  # An actual filesystem check, not a recollection: this is the line that makes the
+  # no-file branch unreachable without evidence.
+  grep -q 'ls TODO\.md' "$skill"
+
+  # Absence is proven by that command failing, never by git output being empty.
+  grep -qi 'never conclude the file is missing' "$skill"
+}
+
+@test "task-status keeps its one-line output contract" {
+  local skill="${BATS_TEST_DIRNAME}/../claude/skills/task-status/SKILL.md"
+
+  # The whole point of the skill is one line; a summary or follow-up offer defeats it.
+  grep -q 'one line, and nothing else' "$skill"
+  grep -q 'No TODO.md file exists.' "$skill"
 }
 
 @test "zshrc initialises starship after sourcing oh-my-zsh" {

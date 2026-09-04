@@ -146,7 +146,7 @@ setup_claude_vendor() {
 # their own state there. The list is explicit on purpose; do not glob it.
 setup_claude_skills() {
   local skill status=0
-  for skill in bug-fixing clean-code development plan-writing ui-separation; do
+  for skill in bug-fixing clean-code development plan-writing task-status ui-separation; do
     link "$REPO_DIR/claude/skills/$skill" "$HOME/.claude/skills/$skill" || status=1
   done
   return "$status"
