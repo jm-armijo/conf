@@ -19,7 +19,7 @@ The script:
 - Symlinks `starship/starship.toml` → `~/.config/starship.toml`. This step is independent of the install above, so the config still lands where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
-- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory and one for `vendor/`. See [Claude Code](#claude-code) for what is and isn't managed.
+- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the two hooks — plus one symlink per tracked skill directory and one for `vendor/`. See [Claude Code](#claude-code) for what is and isn't managed.
 
 The clone location isn't baked in anywhere, so any directory works.
 
