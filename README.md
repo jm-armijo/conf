@@ -15,20 +15,17 @@ cd ~/code/conf
 The script:
 
 - Symlinks `zsh/zshrc` → `~/.zshrc` and `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
-- Installs the **Starship** prompt with `brew install starship` (skipped, with a message, if it's already there or if Homebrew isn't). Starship is a compiled binary, not a zsh script, so it comes from a package manager rather than being vendored here.
-- Symlinks `starship/starship.toml` → `~/.config/starship.toml` — the prompt's own config, which *is* tracked in this repo. This step runs independently of the install above, so the config still lands on a machine where Homebrew is missing.
+- Installs the **Starship** prompt with `brew install starship` (skipped, with a message, if it's already there or if Homebrew isn't).
+- Symlinks `starship/starship.toml` → `~/.config/starship.toml`. This step is independent of the install above, so the config still lands where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
 - Symlinks `ghostty/config` → `~/.config/ghostty/config`.
-- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the bash hook — plus one symlink per tracked skill directory and one for `vendor/`. See [Claude Code](#claude-code) for what is and isn't managed.
+- Symlinks the **Claude Code** global config into `~/.claude` — the global instructions, `settings.json`, the statusline script and its config and colour library, and the two hooks — plus one symlink per tracked skill directory and one for `vendor/`. See [Claude Code](#claude-code) for what is and isn't managed.
 
-The clone location isn't baked in anywhere — `zsh/zshrc` finds its sibling files by
-resolving its own `~/.zshrc` symlink — so any directory works.
+The clone location isn't baked in anywhere, so any directory works.
 
 Because these are symlinks, any later edit to your live config is saved straight back into the repo — including `git config --global` writes, which follow the symlink into `git/gitconfig`.
 
-Existing files are backed up (renamed with a `.backup.<timestamp>` suffix) before being replaced. The script is idempotent — safe to re-run.
-
-Every step runs through `run()`, which **records a failure and carries on** rather than aborting (`set -uo pipefail`, deliberately no `-e`). One broken step never blocks the rest; the script lists what failed at the end and exits non-zero. Each app's install strategy — file symlink, directory symlink, `defaults import`, or package manager — is chosen from how that app writes to its own files, and the per-app sections below give the reasoning.
+Existing files are backed up (renamed with a `.backup.<timestamp>` suffix) before being replaced. The script is idempotent — safe to re-run. **A failing step does not abort the rest**: the script lists what failed at the end and exits non-zero.
 
 After running, restart your shell (`exec zsh`).
 
@@ -45,17 +42,14 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
   ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
 ```
 
-The Starship prompt needs a **Nerd Font** — a stricter requirement than agnoster's
-Powerline-patched font. The rounded segment caps (``, ``) and the branch/AWS icons in
-`starship/starship.toml` are glyphs that only exist in the Nerd Font range; a Powerline
-font alone renders them as boxes or blanks:
+The Starship prompt needs a **Nerd Font**. A Powerline font alone renders the rounded
+segment caps and the branch/AWS icons as boxes or blanks:
 
 ```bash
 brew install --cask font-meslo-lg-nerd-font
 ```
 
-The terminal font is part of this repo (`ghostty/config`), so set it there — the symlink
-makes it live — rather than in a GUI:
+Set the terminal font in `ghostty/config` rather than in a GUI; the symlink makes it live:
 
 ```
 font-family = MesloLGS Nerd Font
@@ -76,27 +70,21 @@ In iTerm2: Settings → Profiles → Text → enable *Use built-in Powerline gly
 
 ## Prompt
 
-`starship/starship.toml` is agnoster's look rebuilt on Starship: agnoster's section
-order (`status → virtualenv → aws → context → dir → git`) and its colours, drawn as
-rounded segments rather than agnoster's square ones.
+`starship/starship.toml` is agnoster's look rebuilt on Starship: the same section
+order (`status → virtualenv → aws → context → dir → git`) and colours, drawn as
+rounded segments.
 
-The colours are the **basic-8 terminal names** (`blue`, `green`, `yellow`, `black`,
-`red`, `cyan`), not hex, deliberately — they resolve against the terminal's own palette,
-so the `theme` line in `ghostty/config` still recolours the prompt exactly as it did
-under agnoster.
+Colours are the **basic-8 terminal names** (`blue`, `green`, `yellow`, `black`, `red`,
+`cyan`), not hex, so the `theme` line in `ghostty/config` recolours the prompt too.
 
-The one bit of logic worth knowing: agnoster coloured the git segment green when the
-working tree was clean and yellow when it was dirty. Starship has no such switch, so
-that's two modules — `[git_branch]` is the always-present green pill with the branch
-name, and `[git_status]` is a yellow pill that appears beside it only when the tree is
-dirty.
+The git segment is two modules: `[git_branch]` is the green pill that is always there,
+and `[git_status]` a yellow one that appears beside it only when the tree is dirty.
 
 ## Claude Code
 
-`~/.claude` mixes two very different things: a handful of files you write, and a
-lot of state Claude Code writes for itself — session transcripts, caches, plugin
-installs, shell snapshots, `history.jsonl`. Only the first group is tracked here,
-one symlink per file, so the rest stays machine-local and out of git:
+`~/.claude` holds both files you write and state Claude Code writes for itself
+(transcripts, caches, plugin installs). Only the first group is tracked, one symlink
+per file, so the rest stays machine-local:
 
 | Tracked | Linked to |
 | --- | --- |
@@ -111,53 +99,38 @@ one symlink per file, so the rest stays machine-local and out of git:
 | `claude/skills/<skill>/` | `~/.claude/skills/<skill>/` — one link per skill |
 | `claude/vendor/` | `~/.claude/vendor/` — the whole directory, one link; see [Vendored bundles](#vendored-bundles) |
 
-**One file is renamed across the link.** Claude Code requires the name
-`CLAUDE.md`, but a file by that name in *this* repo would be read as this repo's
-own project instructions — which is a different file with a different job. So the
-tracked copy is `claude/global-instructions.md` and `link()` puts it at
-`~/.claude/CLAUDE.md`. A test pins the rename.
+**`claude/global-instructions.md` is renamed to `~/.claude/CLAUDE.md` across the
+link**, because a `CLAUDE.md` in this repo would be read as this repo's own project
+instructions instead.
 
-`settings.json` refers to the hook and the statusline by their `~/.claude/...`
-paths, so those two links are what make it work — renaming a script here without
-editing `settings.json` leaves Claude Code silently invoking nothing. A test
-pins that pairing.
+**Renaming a script under `claude/` means editing `claude/settings.json` too** — it
+names the statusline and the hooks by their `~/.claude/...` paths, and a stale path
+is invoked silently with no warning.
 
-**One file is deliberately neither tracked nor linked:**
-`~/.claude/statusline-colors.db`, the session colour assignments. It is runtime
-state the statusline creates on first use, and it is machine-local by design — a
-colour belongs to *this* laptop's set of checkouts, not to any project. Delete it
-to reset every assignment. See [Session colours](#session-colours-are-recorded-not-hashed).
+`~/.claude/statusline-colors.db` is deliberately neither tracked nor linked: it is
+machine-local runtime state the statusline creates on first use. Delete it to reset
+every assignment.
 
 ### The statusline's one hard rule
 
 **Claude Code discards the entire statusline if the command writes a single byte
-to stderr** — no error, no partial render, the line just vanishes. Two separate
-outages traced to exactly this, and neither was visible from a normal shell:
-
-- `md5sum` resolves only in `/sbin`, which is **not** on the PATH Claude Code
-  gives the hook, so it printed `command not found` to stderr. Every manual test
-  passed because an interactive PATH includes `/sbin`.
-- `ps -p "$PPID"` writes to stderr once that PID has gone away.
-
-`statusline.sh` therefore redirects fd 2 to `/dev/null` for the whole script as a
-structural backstop, so a command added later cannot silently kill the line. To
-diagnose it, unmute stderr:
+to stderr** — no error, no partial render, the line just vanishes. `statusline.sh`
+redirects fd 2 to `/dev/null` for the whole script, so editing it means you get no
+feedback when something breaks. To diagnose, unmute stderr:
 
 ```bash
 echo '{}' | STATUSLINE_DEBUG=1 ~/.claude/scripts/statusline.sh
 ```
 
-Reproduce the real hook environment with `env -i` — an inherited PATH hides this
-whole class of failure:
+Reproduce the hook's environment with `env -i`; an interactive PATH hides this whole
+class of failure (`md5sum` lives in `/sbin`, which Claude Code does not pass on):
 
 ```bash
 echo '{}' | env -i PATH=/usr/bin:/bin HOME="$HOME" ~/.claude/scripts/statusline.sh
 ```
 
-Three tests pin the contract: stderr stays empty across valid, empty and
-malformed payloads; exit is zero with non-empty output; and the output is valid
-UTF-8 (the bar glyph is 3 bytes, and a byte-based width calculation once sliced
-it mid-sequence).
+Tests pin the contract: stderr stays empty across valid, empty and malformed
+payloads, exit is zero with non-empty output, and the output is valid UTF-8.
 
 ### What the statusline renders
 
@@ -168,224 +141,63 @@ A context-usage bar on top, then a metrics line:
 ~/code/conf |  master | task     Opus | ctx:12% | 24.1k tok | 14:22:01 | cpu:3% mem:412M
 ```
 
-- **Full means the auto-compact point, not the raw window.** Claude Code compacts
-  once the input token count reaches `CTX_MAX - CTX_RESERVE` — 167,000 on a
-  200,000 window — because the reserve it holds back for output is an *absolute*
-  token budget, not a fraction of the window. So the gauge is scaled against that
-  threshold and reads 100% exactly when compaction fires. Scaling against the raw
-  200,000 read only ~84% at that moment, showing about a seventh of the bar as
-  headroom that did not exist. Past the threshold it clamps at 100% rather than
-  overshooting, since one large turn can cross the line before compaction runs.
+The bar fills as context is used, green through to red. **Full means the
+auto-compact point, not the raw window** — it reads 100% exactly when Claude Code
+compacts, not when the window is literally full.
 
-  The token count and window size come from the payload's `context_window` object
-  when the CLI provides one, falling back to summing the session transcript on
-  older versions and at the very start of a session. Both numbers live in
-  `claude/context-window.conf`, symlinked to `~/.claude/context-window.conf` and
-  live the moment you save it:
+`dir | branch | task` share one background colour, so each checkout is visually
+distinct — see [Session colours](#session-colours-are-recorded-not-hashed). The
+branch is green on a clean tree and yellow when there is any uncommitted change,
+untracked files included.
 
-  ```bash
-  CTX_MAX=200000      # raise to 1000000 for an extended-context model
-  CTX_RESERVE=33000   # empirical; NOT documented by Anthropic
-  ```
+Two settings control the gauge, in `claude/context-window.conf`. It is symlinked
+to `~/.claude/context-window.conf`, so a saved change is live immediately:
 
-  These are facts about *Claude Code's* behaviour rather than statusline
-  settings, which is why they are a separate file from `statusline.conf` — any
-  other script needing to reason about the compaction threshold should read them
-  from here. `CTX_RESERVE` was measured across 93 `compact_boundary` records
-  (`200000 - preTokens` fell in a 32,852–33,273 band) and is confirmed absolute by
-  the 1M-window case compacting at ~967K. Both settings have inline defaults in
-  the script, so an absent, unreadable or half-written config falls back rather
-  than breaking the statusline; a non-numeric value falls back too, and a reserve
-  at or above the window reads 0% instead of dividing by zero.
-- **The bar is a context gauge with a positional gradient.** The filled run is
-  the percentage of the usable context window in use. Its colour is a function of each
-  cell's **position along the bar**, not of the percentage: cell `i` of `n` is
-  coloured at fraction `i/(n-1)`, so the leftmost cell is always green and the
-  rightmost cell of a full bar is always red, whatever the fill. Growing context
-  therefore extends the bar rightward and *reveals* progressively warmer colours,
-  instead of recolouring the whole bar at once. The remainder stays visible as a
-  dim grey track so the scale is always on screen. The colour is a pure function
-  of (position, width), so two sessions at the same width produce a byte-identical
-  bar — it is deliberately **not** hashed, and it is the one part of the line that
-  has nothing to do with the per-session colour below. Red at the right-hand end
-  is the point here.
-- **The ramp is piecewise-linear through waypoints, not a straight green→red
-  lerp.** Two reasons, and both are the shape's job. A single lerp passes through
-  desaturated olive at the midpoint, because the endpoints' channels cross over
-  and cancel; routing through real yellow and orange holds saturation ≥ 0.75 the
-  whole way. And *where* the warning lands matters more than linearity — the stops
-  put yellow at **35%** and red-orange at **85%**, so the bar stops reading as
-  "fine" about a third of the way across. The linear version sat at pure green
-  until ~30% and only reached yellow near 50%, which read as safe far too long.
-  Hue falls monotonically 139° → 0° across the bar. The stops are:
+```bash
+CTX_MAX=200000      # raise to 1000000 for an extended-context model
+CTX_RESERVE=33000   # what Claude Code holds back for output
+```
 
-  | fraction | rgb | |
-  | --- | --- | --- |
-  | 0.00 | `60,200,70` | green |
-  | 0.20 | `150,205,40` | yellow-green |
-  | 0.35 | `225,210,30` | yellow |
-  | 0.55 | `245,175,25` | amber |
-  | 0.70 | `250,130,20` | orange |
-  | 0.85 | `240,75,30` | red-orange |
-  | 1.00 | `215,35,35` | red |
-
-- **Two output paths, chosen by `COLORTERM`.** With `truecolor` or `24bit` the bar
-  emits `38;2;r;g;b` and every cell gets its own exact colour — the largest
-  per-cell channel step on a 100-cell bar is **6/255**, below the visible-banding
-  floor. That is the path that actually delivers smoothness, and it is what
-  ghostty gets. Everything else falls back to the ANSI-256 cube, which *cannot*:
-  6 levels per channel means a computed green→red diagonal yields **six** distinct
-  codes across the whole bar, one hard jump every ~17%. Worse, nearest-cube
-  matching is not even monotonic in hue there (`166` sits at 27°, between `202` at
-  22° and `160` at 0°), so the ramp visibly backtracks. The fallback therefore
-  walks a hand-checked ladder of 11 fully-saturated codes whose hue is strictly
-  monotonic 120° → 0°. It is coarser by construction — that is the cube's limit,
-  not a defect in the code.
-- The glyph is `▔` U+2594 UPPER ONE EIGHTH BLOCK, drawn as **foreground**. A cell
-  cannot be split vertically, so a background-painted run of spaces is always a
-  full row tall; inking the glyph instead gives a one-eighth-height rule.
-  Consecutive cells resolving to the same cube code share one escape sequence, so
-  a 100-cell bar emits a handful of SGR sequences rather than a hundred. Anything
-  measuring the bar's width must strip SGR and count **characters** — never bytes,
-  and never the raw string length.
-- **`dir | branch | task` share one background colour**, looked up from a small
-  database keyed on cwd+branch, so each checkout is visually distinct and a given
-  checkout is always the same colour — see
-  [Session colours](#session-colours-are-recorded-not-hashed). All three share the
-  one colour so they read as a single block; only the *foreground* changes between
-  them, with a bare `38;5;`/`3x` and never a reset, which would drop the
-  background too and punch a gap at every separator.
-- **Foregrounds are fixed, not computed.** Directory and task are **yellow**.
-  The branch is **green when the working tree is clean and yellow when it is
-  dirty**, where dirty is agnoster's rule — any uncommitted change at all:
-  unstaged edits, staged edits, *or* untracked files. Unpushed commits do not
-  count. That is exactly `git status --porcelain` being non-empty; do not
-  "optimise" it to `-uno`, which would stop counting untracked files. It runs once
-  per refresh (~12 ms on this repo, against a ~65 ms whole-script budget) and is
-  skipped entirely outside a repo.
-- **The palette is filtered by contrast**, because those fixed foregrounds have to
-  stay legible over every background in it. The rule and the numbers are under
-  [Session colours](#session-colours-are-recorded-not-hashed), which owns the
-  palette.
-- **The metrics wrap when they do not fit.** Normally the left and right groups
-  share one line, padded so the line ends on the bar's exact column. When they
-  would overflow, the right group moves to its own line, right-aligned to the
-  same edge. The script is stateless and re-run per refresh, so there is no
-  hysteresis: it flips between 2 and 3 lines at the boundary column while the
-  terminal is resized. That is expected.
-
-**The session title comes from `session_name`, not `customTitle`.** `customTitle`
-is the shape used in the session *transcript* (a record of type `custom-title`);
-the statusline payload carries the same value under `session_name`, resolving the
-user-set title first and the AI-generated one as a fallback. Reading
-`.customTitle` from the payload always yielded empty, so the task segment
-rendered as nothing at all.
-
-`statusLine.refreshInterval` in `settings.json` is in **seconds**, not
-milliseconds (Claude Code multiplies it by 1000 internally, minimum 1), so
-`"refreshInterval": 1` is a one-second refresh.
-
-Sixteen further tests pin this rendering: the fit and overflow layouts, the
-right-alignment of the wrapped group, the pad clamp (`printf` reads a negative
-`%*s` width as a left-justify flag and silently emits nothing), the fill
-proportion, the gradient's green and red endpoints, its monotonicity, its
-independence from the fill percentage, its exact per-cell formula, the bar being
-byte-identical across directories, the yellow directory and the task segment
-being present at all, the branch's green/yellow across a clean tree and all three
-kinds of dirt, the palette's contrast ratios, the palette's adjacent-ΔE
-ordering, the background closing before the metrics, and absent segments leaving
-no coloured gap. A further fifteen cover the colour database itself — see
-[Session colours](#session-colours-are-recorded-not-hashed).
-
-**Changes to this script need a Claude Code restart.** `settings.json` is read
-once at startup, so an edited statusline does not take effect in a running
-session — which has already produced one phantom "it's broken" report.
+They describe *Claude Code's* compaction behaviour rather than this script's
+display, which is why they are a separate file from `statusline.conf`; anything
+else needing the threshold should read it from here. Both have inline defaults,
+so an absent or half-written file still renders a statusline.
 
 ### Session colours are recorded, not hashed
 
 The `dir | branch | task` block is painted so you can tell one session from
-another **without reading the text**. That only works if the colour is stable and
-if two sessions on screen together look different — and hashing cwd+branch into
-the palette gave neither. Two live sessions could hash to the same code with
-nothing to detect it, and nothing could ever be done about it if they did.
-
-So the colour is not derived any more, it is **recorded**. A directory+branch is
-assigned a colour once and keeps it permanently, in a SQLite database at
+another **without reading the text**. A directory+branch is assigned a colour
+once and keeps it permanently, in a SQLite database at
 `~/.claude/statusline-colors.db`. Close the session, come back next month, check
 the branch out again — same colour.
 
-- **The key is directory + branch.** Switching branch changes the colour, which
-  is the intended behaviour: it is a different piece of work. Switching *back*
-  returns the original colour.
-- **Colours are not exclusive.** Past 12 keys they are reused. A new key takes the
-  **least-used** code, and among those tied at the lowest count, the one earliest
-  in the palette — so with every count at zero it walks the ordered list from the
-  top, and once the counts level again it starts over. All 12 are handed out
-  before any repeats, and repeats stay evenly spread.
-- **Every entry clears a contrast bar, scored against the foregrounds the terminal
-  actually renders.** A background survives only if the worse of its two WCAG
-  ratios — against the yellow and the green above — is ≥ 3.0 (AA for large text).
-  `SGR 33` and `SGR 32` resolve through the *terminal theme*: under ghostty's
-  `deep` they are `#d9bd26` and `#1cd915`, not xterm's `rgb(205,205,0)` and
-  `rgb(0,205,0)`. Scoring xterm's shipped **7 of 16 codes below the bar** — the
-  swatch page looked fine, the terminal did not. A test pins the real constants,
-  and codes `0`–`15` are theme-resolved too, so they are not on the 6×6×6 cube.
+- **The key is directory + branch.** Switching branch changes the colour, which is
+  intended: it is a different piece of work. Switching *back* returns the original.
+- **Colours are not exclusive.** Past 12 keys they are reused, least-used first,
+  so repeats stay evenly spread.
+- **An existing row is never reassigned**, so a live session's colour cannot
+  change underneath you.
+- **Old assignments are forgotten** after 30 days by default, timed from when the
+  colour was first assigned. Cleanup runs only when a new colour is assigned.
 
-  Both foregrounds are bright (luminance 0.513 and 0.499), so 3.0 caps a
-  qualifying background at 0.133 luminance and only **42 of the 256 codes** clear
-  it. Hence a list that is short, dark and has **no orange**. It is twelve rather
-  than sixteen because the pool is clustered — `21`–`26` is a straight blue ramp —
-  so 16 entries could only be reached by including barely separable codes. Cutting
-  to 12 raised the contrast floor from 3.04 to **3.52**. Reds are not excluded:
-  the block is a solid painted field, not a lone glyph, so `52`, `124` and `125`
-  are in on purpose.
-
-  **Two distances are guaranteed, and both are load-bearing.** Every pair of
-  entries is separated by a CIELab ΔE of at least **24.36** (`21` vs `56`) — that
-  is rule 2, distinctness from *every* other entry rather than just from a
-  neighbour, and it is what caps the list at twelve. On top of that the *order* is
-  chosen to maximise the distance between **adjacent** entries, because assignment
-  walks the list and neighbours go to sessions likely open together: minimum ΔE
-  **91.3**, mean 109.8, against 53.2 for the same 12 codes sorted ascending (which
-  would put `124` beside `125`). The list is **cyclic**, so the `53 → 58` wrap
-  counts too (ΔE 96.9). **Regenerate the array, never hand-edit it** — adding a
-  code without re-running the ordering breaks either guarantee silently.
-- **An existing row is never reassigned.** Whatever else happens, a live session's
-  colour cannot change underneath it — that is the entire point of the feature,
-  and it is why the insert is `INSERT OR IGNORE`. Two sessions racing to claim the
-  same new key produce one row, and the loser reads the winner's value rather than
-  overwriting it with a freshly computed one.
-- **Old assignments are forgotten**, by default after 30 days from when the colour
-  was *first assigned* — there is no "last used" tracking, so a session left open
-  longer than the retention period loses its row and picks up a new colour on the
-  next render. Cleanup runs only when a new colour is being assigned, never on the
-  far more frequent read path.
-
-Both of those numbers live in `claude/statusline.conf`, which is symlinked to
-`~/.claude/statusline.conf` and so is live the moment you save it — no reinstall,
-no restart:
+Both numbers live in `claude/statusline.conf`, symlinked to
+`~/.claude/statusline.conf` and live the moment you save it:
 
 ```bash
 STATUSLINE_COLOR_RETENTION_DAYS=30   # 0 disables cleanup entirely
 STATUSLINE_COLOR_DB="$HOME/.claude/statusline-colors.db"
 ```
 
-As with `context-window.conf`, every setting has an inline default, so an absent
-or half-written file falls back rather than breaking the statusline. A
-non-numeric retention value falls back to 30 rather than being interpolated into
-a malformed `DELETE`.
-
-The logic lives in `claude/lib/session-colors.sh` rather than inside the
-statusline, so it can be tested on its own **and** used from your own shell:
+The logic lives in `claude/lib/session-colors.sh`, so you can use it from your
+own shell:
 
 ```bash
 . ~/.claude/lib/session-colors.sh
 session_color ~/code/conf master      # prints the assigned code, or nothing
 ```
 
-`session_color` is **read-only** — it never assigns, so merely opening a terminal
-cannot claim a colour. `session_color_assign` is the one that creates an
-assignment, and only the statusline calls it.
+`session_color` is **read-only** — opening a terminal cannot claim a colour.
+`session_color_assign` is the one that assigns, and only the statusline calls it.
 
 Inspect or reset the database directly:
 
@@ -395,68 +207,17 @@ rm ~/.claude/statusline-colors.db*     # reset every assignment
 ```
 
 Every failure degrades to the old behaviour rather than to a broken line: if
-`sqlite3` is missing, the directory is unwritable, or the database is corrupt,
-the statusline falls back to hashing cwd+branch into the same palette.
+`sqlite3` is missing, the directory is unwritable or the database is corrupt, the
+statusline falls back to hashing cwd+branch into the same palette.
 
-**`PRAGMA busy_timeout=10000` is not optional.** SQLite allows one writer at a
-time and by default abandons a locked write *instantly*. The quiet failure is the
-worse one: across 24 parallel writers, dropping the pragma silently lost 11 rows
-with **zero** bytes of stderr. It can also print `database is locked`, which under
-the rule above discards the whole statusline. The regression test therefore
-asserts on **rows written**, since a stderr-only assertion passes vacuously.
-Writes hold the lock for microseconds, so the ceiling is a backstop against a
-machine stall, not a contention budget. (`journal_mode=WAL` is set alongside it,
-but is a property of the file, so once is enough.)
+### Skills
 
-Both pragmas print a result row, which would be captured by the caller's `$(...)`
-and read as a colour code — an early version painted every session in colour
-"2000". They cannot be silenced inline, so the library emits a marker row after
-them and `sed` drops everything up to it.
+Skills are linked **one directory each**, from a hardcoded list in
+`setup_claude_skills` — never `claude/skills` as a whole, because Claude Code's
+plugins write into `~/.claude/skills` too. Anything not on the list stays a real
+directory beside the symlinks.
 
-### Why skills are linked one-by-one
-
-Claude Code's **plugins write into `~/.claude/skills` too** — the ruby-lsp plugin
-keeps a `Gemfile` and lockfile in `skills/.ruby-lsp/`. Symlinking the whole
-`skills` directory would therefore point that plugin state straight at the repo,
-where it would show up as untracked noise on every machine. Linking each skill
-directory individually keeps the boundary exact: tracked skills are repo-backed,
-and anything else — plugin state, or a skill written on one machine and not yet
-committed — stays a real directory beside them.
-
-The trade-off is that adding a skill to the repo means adding its name to the
-list in `setup_claude_skills`. That is deliberate: it is the same explicit
-opt-in every other app in `setup.sh` gets.
-
-Skill directories follow Claude Code's own layout: `SKILL.md` at the root, with
-`scripts/` for executables, `references/` for docs loaded on demand, and
-`assets/` for templates and fonts. `clean-code` uses `references/` for its
-chapters; `plan-writing` uses `assets/` for the two baselines it fills in
-(`UI_TEMPLATE.html`, `TODO_TEMPLATE.md`); its sibling `development` does the
-work and needs no assets of its own. Those are tracked in the repo rather
-than read from `~/.config/claude-templates`, so the skill works on a fresh
-machine with nothing else installed — that path is still honoured when it
-exists, as the machine-local override.
-
-### How plans get written and how work gets done
-
-Two skills. `plan-writing` writes the plan to `PLAN.html` and `TODO.md`, opens it
-in the browser, and halts for approval — **the chat gets one line**, not a
-summary, because you read the plan in the browser. `assets/UI_TEMPLATE.html` is
-an input the model reads *while* planning, so changing the shape of every future
-plan is an edit to that template and nothing else.
-
-`development` then does the work, in five steps: `writing tests`, `coding`,
-`bot review`, `draft pr`, `author review`. Tests always move first, `--no-verify`
-is never allowed, and every task ends in a draft PR that is a hard stop until you
-review it. Five is a baseline — a task needing a migration gets an extra step,
-shown in `PLAN.html` so you can veto it first.
-
-`TODO.md` is a to-do list and nothing else. **Status is derived from the
-checkboxes**, never declared: a task with no steps checked is not started, one
-with some is in progress, a checked task is done. The shape is kept rigidly
-uniform so a script can parse it without edge cases.
-
-### Adding a skill
+To add one:
 
 ```bash
 mv ~/.claude/skills/<name> claude/skills/<name>   # move the real dir into the repo
@@ -464,18 +225,41 @@ mv ~/.claude/skills/<name> claude/skills/<name>   # move the real dir into the r
 ./setup.sh                                        # links it back
 ```
 
+Until that name is added, the skill is not installed. A test fails if a listed name
+has no `SKILL.md`.
+
+Skill directories follow Claude Code's layout: `SKILL.md` at the root, `scripts/`
+for executables, `references/` for docs loaded on demand, `assets/` for templates.
+`plan-writing` keeps its two templates in `assets/`, so it works on a fresh machine;
+`~/.config/claude-templates` is honoured as an override when it exists.
+
+### Planning and doing
+
+`plan-writing` writes a plan to `PLAN.html` and `TODO.md`, opens it in the browser
+and halts for approval; **the chat gets one line**, since you read the plan in the
+browser. To change the shape of every future plan, edit `assets/UI_TEMPLATE.html` —
+it is the input the model plans against.
+
+`development` does the work, in five steps: `writing tests`, `coding`, `bot review`,
+`draft pr`, `author review`. Tests move first, `--no-verify` is never allowed, and
+each task ends in a draft PR that is a hard stop until you review it. A task needing
+an extra step gets one, shown in `PLAN.html` so you can veto it first.
+
+`TODO.md`'s status is derived from the checkboxes, never declared: no steps checked
+is not started, some checked is in progress, a checked task is done.
+
 ### Vendored bundles
 
 `claude/vendor/` holds third-party JavaScript a generated `PLAN.html` loads from
-`file://` — currently just Mermaid 11, the diagram renderer. It is the one
-directory symlink under `~/.claude`, because nothing but this repo writes there.
+`file://` — currently just Mermaid 11, the diagram renderer. It is linked as a whole
+directory, so a second bundle needs no change to `setup.sh`.
 
 > **Do not open `claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js`.** It is 3.4MB of
 > minified build output — roughly 750,000 tokens, several times an LLM context
 > window. Reference it by path only; a version bump is a re-download, never a
 > hand-edit.
 
-Bumping the version is a re-download, never a hand-edit:
+To bump the version:
 
 ```bash
 curl -sSL -o claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js \
@@ -485,22 +269,15 @@ curl -sSL -o claude/vendor/mermaid.min.BOTS-DO-NOT-READ.js \
 Then re-prepend the agent guard comment to line 1 — a fresh download strips it —
 and check a diagram still renders from `file://`.
 
-It must load as a classic `<script src>`: from `file://` an ESM `import` fails
-even for a local file, and reverting to one breaks every diagram silently. A
-test asserts the template contains neither `cdn.jsdelivr.net` nor
-`type="module"`.
+**It must load as a classic `<script src>`, never `type="module"`.** From `file://`
+an ESM import fails even for a local file, and every diagram then silently renders
+as its own source text.
 
 ### One caveat on `settings.json`
 
-Claude Code rewrites `settings.json` itself when you change a setting from
-inside a session (`/config`, the theme picker). Whether that write **preserves
-the symlink depends on how it writes**: an in-place write follows the link into
-the repo, but a temp-then-rename replaces the link with a regular file — the
-same behaviour that rules out file symlinks for OBS. This has **not** been
-verified against a real in-app settings change; the CLI's `config` subcommand
-was removed, so there is no non-interactive way to trigger the write path.
-
-It is harmless either way, and easy to spot:
+Claude Code rewrites `settings.json` itself when you change a setting from inside a
+session (`/config`, the theme picker). That write may replace the symlink with a
+regular file, leaving your change out of the repo. It is harmless, and easy to spot:
 
 ```bash
 ls -l ~/.claude/settings.json      # should say "-> .../conf/claude/settings.json"
@@ -519,11 +296,9 @@ file before rewriting it, so the previous version is recoverable regardless.
 
 ## Magnet
 
-Magnet is a sandboxed Mac App Store app. Its settings live in a preferences
-plist managed by macOS (`cfprefsd`), which rewrites the file atomically at
-unpredictable times — so a symlink would get clobbered and is not safe here.
-Instead `magnet/com.crowdcafe.windowmagnet.plist` is a manual backup (stored
-as XML so changes are reviewable in git).
+Magnet's settings are managed by `cfprefsd`, which would clobber a symlink, so
+`magnet/com.crowdcafe.windowmagnet.plist` is a **manual backup** — changes there are
+not saved automatically.
 
 Back up current settings into the repo:
 
@@ -545,18 +320,14 @@ OBS config depends on the monitor, so it's stored per resolution under
 `obs/<resolution>/` (e.g. `obs/7680x2160/`). `setup.sh` lists the available
 configurations and asks which one to install.
 
-OBS rewrites individual files via temp-then-rename, which would clobber a
-*file* symlink — but a *directory* symlink survives (the renames happen on
-files inside it, never the directory itself). So `setup.sh` symlinks the whole
-`~/Library/Application Support/obs-studio` directory to the chosen
-`obs/<resolution>/`, and edits you make in OBS **autosave straight back into
-the repo**.
+`setup.sh` symlinks the whole `~/Library/Application Support/obs-studio` directory
+to the chosen `obs/<resolution>/`, so edits made in OBS **autosave straight back into
+the repo**. Never switch this to per-file symlinks — OBS's temp-then-rename saves
+would replace them with real files.
 
-OBS also writes logs, profiler data, browser caches, and binary plugins into
-that directory. Because it's symlinked, those land under `obs/<resolution>/`
-too — but `.gitignore` tracks only the portable config (`global.ini`,
-`user.ini`, `basic/`) and ignores everything else, so the junk never gets
-committed.
+OBS also writes logs, caches and binary plugins there. `.gitignore` tracks only
+`global.ini`, `user.ini` and `basic/`, so that junk is never committed — a new
+tracked OBS file needs a new `!` negation.
 
 **Note:** the obs-websocket server password lives in
 `plugin_config/obs-websocket/config.json`, which is gitignored — it's a secret
@@ -591,57 +362,28 @@ brew install lefthook shellcheck shfmt bats-core
 lefthook install
 ```
 
-`setup.sh` is the only executable here and it runs against a real `$HOME` — `link()`
-moves existing dotfiles aside. A bug reaches the machine the moment it is run, and
-there is no CI, so the checks live on the commit itself. Nothing is softened with
-`|| true`: a check that cannot fail cannot protect anything.
+There is no CI, so the checks live on the commit itself, and nothing is softened
+with `|| true`.
 
-### Pre-commit scoping
+`lefthook.yml` runs `shellcheck` and `shfmt` on staged `*.sh`, and the suite when a
+commit touches `setup.sh`, `claude/**`, `zsh/**`, `starship/**` or `test/**`. Commits
+touching only `obs/`, `ghostty/`, `git/`, `magnet/` or the docs skip the ~15s run.
 
-The `tests` command is globbed rather than run unconditionally. The paths come from
-every `${BATS_TEST_DIRNAME}/../` reference in `test/setup.bats` — `setup.sh`,
-`claude/**`, `zsh/**`, `starship/**` and `test/**` — so a commit touching only
-config data no test reads (`obs/`, `ghostty/`, `git/`, `magnet/`, `bash/`, `tmux/`,
-`vim/`, the markdown docs) skips the ~15s run.
+**The globs use a trailing `**`, which is not interchangeable with `**/*`** — the
+latter needs an intermediate directory, so it matches `claude/lib/session-colors.sh`
+but misses `claude/settings.json` and skips the suite.
 
-The globs are deliberately **wider** than the exact file list, because the suite
-asserts on *absence* too. `[ ! -e zsh/spaceship.zsh ]` only starts failing once that
-file comes back, and a file-level glob would never fire on the commit that added it;
-the same reasoning covers `claude/**`, where the skills test walks a hardcoded list
-of directories, so a new or renamed skill has to trigger the suite. A false negative
-is a broken machine setup landing green; a false positive is 15 seconds.
-
-**The trailing `**` is load-bearing and is NOT interchangeable with `**/*`.** The
-latter requires at least one intermediate directory, so it matches
-`claude/lib/session-colors.sh` but silently **misses** `claude/settings.json`.
-Verified against lefthook 1.12.2 — the first draft of this scoping used `**/*` and
-skipped the whole suite on a `claude/statusline.conf` commit.
-
-### Why the test count has a floor
-
-A truncated `.bats` file does not fail — it silently **defines fewer tests** and the
-suite still exits 0. Hit for real: an apostrophe inside a single-quoted awk program
-closed the quote and took the rest of the file with it, dropping the count from 66
-to 45 on a green run. So `test-count` asserts a floor on `bats test/ --count` as
-well as on the result; raise it when tests are added. It only has to be tight enough
-to catch a file that stopped parsing partway through.
-
-It is scoped tighter than `tests` (`test/**` only) because nothing outside `test/`
-can change how many tests bats parses.
+**When you add tests, raise the floor in the `test-count` command.** A truncated
+`.bats` file does not fail; it silently defines fewer tests and still exits 0, so the
+floor on `bats test/ --count` is what catches a file that stopped parsing partway.
 
 ### The plan-mode gate
 
-`claude/hooks/plan-artifacts-on-exit.sh` makes plan mode emit `PLAN.html` and
-`TODO.md` without the `plan-writing` skill being named — invoking it by name was
-the thing that kept being forgotten, so the exit is the trigger: block the first
-`ExitPlanMode`, point the model at the skill, let the retry through.
+`claude/hooks/plan-artifacts-on-exit.sh` is a `PreToolUse` gate on `ExitPlanMode`: it
+blocks the first exit and points the model at `plan-writing`, then lets the retry
+through once `PLAN.html` and `TODO.md` exist. Running before the tool is what puts
+the plan in the browser while it is still editable.
 
-**`PreToolUse` is the load-bearing part.** It runs before the tool, so the plan is
-in the browser and still editable when the approval prompt appears. `PostToolUse`
-would render it at the instant it stopped being reviewable.
-
-Exit 2 blocks (stderr goes back to the model), exit 0 allows. It re-blocks only
-while the artifacts are missing — otherwise it would block its own retry and plan
-mode would be inescapable. It exits 0 for a non-git `cwd` and fails open on bad
-input. `cwd` comes from the payload, never `$PWD`.
+It exits 0 for a non-git `cwd` and fails open on bad input, so it cannot wedge plan
+mode.
 
