@@ -1,16 +1,11 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Renders the starship prompt for one named state and compares it against that
-# state's committed expectation. Never runs agnoster: expected-prompts/ is the
-# spec, not a derivation.
-#
-# Usage: check_prompt.rb <state>
+# Never runs agnoster: expected-prompts/ is the spec, not a derivation.
 
 require 'fileutils'
 require 'tmpdir'
 
-# One run of text under a single foreground/background pair.
 Run = Struct.new(:foreground, :background, :text) do
   def to_s
     format("fg=%s bg=%s '%s'", name(foreground), name(background), text)
@@ -23,8 +18,6 @@ Run = Struct.new(:foreground, :background, :text) do
   end
 end
 
-# Reduces an escape-coded prompt to what the eye sees. Byte parity with another
-# renderer is unreachable; the colour pairs and the text under them are not.
 class Sequence
   SGR = /\A\e\[([0-9;]*)m/.freeze
   ZSH_WRAPPER = /%[{}]/.freeze
@@ -85,10 +78,7 @@ class Sequence
   end
 end
 
-# What a state needs on disk and where it is rendered from.
 class Fixture
-  # The prompt prints the path it stands in, so a raw Dir.mktmpdir name would
-  # bake this machine's private tmp path into every comparison.
   def initialize(state, root)
     @state = state
     @root = root
@@ -99,13 +89,8 @@ class Fixture
     # is not one. Nothing is written there, so only this state is non-hermetic.
     @state == 'non-git' ? '/tmp' : File.join(@root, 'home', 'code', 'conf')
   end
-
-  def build
-    self
-  end
 end
 
-# The prompt as starship renders it for one state.
 class Prompt
   CONFIG = File.expand_path('../starship/starship.toml', __dir__)
 
@@ -148,7 +133,6 @@ class Prompt
   end
 end
 
-# A state's committed expectation.
 class Expectation
   DIRECTORY = ENV.fetch('PROMPT_EXPECTED_DIR', File.expand_path('expected-prompts', __dir__))
 
@@ -166,7 +150,6 @@ class Expectation
   end
 end
 
-# Compares one state's render against its expectation and reports the mismatch.
 class Comparison
   def initialize(state)
     @state = state
@@ -190,7 +173,7 @@ class Comparison
 
   def actual
     @actual ||= Dir.mktmpdir do |root|
-      fixture = Fixture.new(@state, root).build
+      fixture = Fixture.new(@state, root)
       Prompt.new(fixture, root).runs.map(&:to_s)
     end
   end
