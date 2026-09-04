@@ -1,0 +1,15 @@
+# Expected colour-transition sequence for the 'conda' prompt state.
+#
+# Active conda env: unlike venv, agnoster DOES draw a magenta segment, because its branch is guarded only by CONDA_DEFAULT_ENV. The plain (base) prefix conda prints is separate and not part of this sequence.
+#
+# THIS FILE IS THE SPEC. Nothing re-derives it at test time. To change how
+# the prompt looks, edit this file and starship.toml in the same commit.
+#
+# Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
+# Format: fg=<0-7|None> bg=<0-7|None> <python-repr of the visible text>
+fg=0 bg=5 ' 🐍 base '
+fg=5 bg=4 ''
+fg=0 bg=4 ' ~/code/conf '
+fg=4 bg=2 ''
+fg=0 bg=2 '  master '
+fg=2 bg=None ''

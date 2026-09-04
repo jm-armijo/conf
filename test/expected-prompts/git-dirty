@@ -1,0 +1,13 @@
+# Expected colour-transition sequence for the 'git-dirty' prompt state.
+#
+# Dirty tree: the SAME branch segment turns yellow. Nothing is appended.
+#
+# THIS FILE IS THE SPEC. Nothing re-derives it at test time. To change how
+# the prompt looks, edit this file and starship.toml in the same commit.
+#
+# Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
+# Format: fg=<0-7|None> bg=<0-7|None> <python-repr of the visible text>
+fg=0 bg=4 ' ~/code/conf '
+fg=4 bg=3 ''
+fg=0 bg=3 '  master ± '
+fg=3 bg=None ''

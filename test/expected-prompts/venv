@@ -1,0 +1,13 @@
+# Expected colour-transition sequence for the 'venv' prompt state.
+#
+# Active virtualenv. Identical to git-clean BY DESIGN, not by copy-paste: the venv name is plain text printed by activate before the prompt runs, and agnoster's own venv segment stays hidden because this shell does not set VIRTUAL_ENV_DISABLE_PROMPT.
+#
+# THIS FILE IS THE SPEC. Nothing re-derives it at test time. To change how
+# the prompt looks, edit this file and starship.toml in the same commit.
+#
+# Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
+# Format: fg=<0-7|None> bg=<0-7|None> <python-repr of the visible text>
+fg=0 bg=4 ' ~/code/conf '
+fg=4 bg=2 ''
+fg=0 bg=2 '  master '
+fg=2 bg=None ''

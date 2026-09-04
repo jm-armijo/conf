@@ -1,46 +1,115 @@
+# Starship configured to render the prompt this repo has always had.
+#
+# Joiners are owned by the segment BEFORE the boundary, drawn in its own colour
+# over the next segment's background: "[](fg:<my bg> bg:<next bg>)". A
+# segment that vanishes takes its arrow with it, so no stale arrow is stranded
+# in a colour whose segment is gone -- the bug this shape exists to avoid.
+#
+# It is this way round, rather than the successor owning the joiner, because
+# the leading segment varies: the directory is first whenever no prefix block
+# shows, and starship has no "previous background" to colour a leading arrow
+# with. Every optional block therefore closes itself into blue, the directory's
+# background.
+#
+# The cost is that a joiner names the background of what FOLLOWS it, so
+# reordering the format string means revisiting those bg: values.
+#
+# The trailing edge is the exception, because what ends the bar varies: the
+# branch run inside a repository, the directory outside one. No module can read
+# its predecessor's colour, so the cap is drawn by whichever module knows it is
+# last -- see the custom.* block below.
+#
+# test/expected-prompts/ is the spec for all of this; test/check-prompt.sh
+# compares against it.
+
 format = """\
 $status\
 $jobs\
 $sudo\
 $conda\
-$python\
 $aws\
 $directory\
-$git_branch\
-$git_status\
-$git_state\
-$character\
+${custom.branch_clean}\
+${custom.branch_dirty}\
+${custom.cap_plain}\
 """
+add_newline = false
 
+# The black status block is a prefix: it opens with a plain space on the
+# terminal background, and the segments that follow supply their own joiner.
 [status]
 disabled = false
-format = "[](fg:black)[$symbol$status](bg:black fg:red)[](fg:black)"
+format = "[ ](bg:black)[$symbol](bg:black fg:red)[](fg:black bg:blue)"
+symbol = "✘ "
 
 [jobs]
-format = "[](fg:black)[⚙](bg:black fg:cyan)[](fg:black)"
+format = "[ ](bg:black)[⚙ ](bg:black fg:cyan)[](fg:black bg:blue)"
+threshold = 1
 
 [sudo]
 disabled = false
-format = "[](fg:black)[⚡](bg:black fg:yellow)[](fg:black)"
+format = "[ ](bg:black)[⚡ ](bg:black fg:yellow)[](fg:black bg:blue)"
 
+# Deliberately disabled: this shell does not set VIRTUAL_ENV_DISABLE_PROMPT, so
+# the venv name is already printed as a plain prefix by `activate`. Enabling
+# this module would show the environment twice. conda has no such prefix in a
+# named env, so it stays on.
 [python]
-format = "[](fg:blue)[($virtualenv)](bg:blue fg:black)[](fg:blue)"
+disabled = true
 
 [conda]
-format = "[](fg:magenta)[🐍 $environment](bg:magenta fg:black)[](fg:magenta)"
+ignore_base = false
+style = "bg:purple fg:black"
+format = "[ 🐍 $environment ](bg:purple fg:black)[](fg:purple bg:blue)"
 
 [aws]
-format = "[](fg:green)[AWS: $profile](bg:green fg:black)[](fg:green)"
+# Every profile renders green: starship has no per-profile style override, so
+# the production red/yellow distinction is not reproducible here.
+format = "[ AWS: $profile ](bg:green fg:black)[](fg:green)"
+symbol = ""
 
+# The directory follows the black prefix blocks in the common case, so its
+# joiner is fg:black. When conda precedes it that arrow is the wrong colour --
+# see the conda note; this is the one joiner whose predecessor varies.
 [directory]
-format = "[](fg:blue)[$path](bg:blue fg:black)[](fg:blue)"
-truncation_length = 4
+format = "[ $path ](bg:blue fg:black)"
+truncation_length = 0
+truncate_to_repo = false
 
-[git_branch]
-format = "[](fg:green)[$branch](bg:green fg:black)[](fg:green)"
+# Agnoster recolours the ENTIRE branch run when the tree is dirty -- both
+# flanking joiners included -- and collapses every kind of change into one "±".
+# Starship's own git_branch/git_status cannot express that: the colour belongs to
+# git_branch but only git_status knows the tree is dirty, and there is no
+# "previous background" variable to bridge them.
+#
+# Two mutually exclusive custom modules do express it. Each `when` predicate
+# decides whether its module renders at all, so each one hardcodes the single
+# colour its case needs and owns both joiners around the text. Exactly one fires.
+#
+# Each also draws its own closing cap, so the run terminates in its own colour.
+# Outside a repository neither fires and custom.cap_plain closes the directory
+# instead -- which is why the cap is not part of [directory]: an unconditional
+# cap there would double-draw inside a repo.
+#
+# `shell` is pinned to a bare bash: without it starship runs the predicate under
+# the login shell, which would source the user's rc files on every prompt.
 
-[git_status]
-format = "[](fg:yellow)[$all_status$ahead_behind](bg:yellow fg:black)[](fg:yellow)"
+[custom.branch_clean]
+when = "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && test -z \"$(git status --porcelain)\""
+command = "git branch --show-current | grep . || git rev-parse --short HEAD"
+format = "[](fg:blue bg:green)[  $output ](bg:green fg:black)[](fg:green)"
+shell = ["bash", "--noprofile", "--norc"]
 
-[git_state]
-format = "[](fg:yellow)[$state](bg:yellow fg:black)[](fg:yellow)"
+[custom.branch_dirty]
+when = "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && test -n \"$(git status --porcelain)\""
+command = "git branch --show-current | grep . || git rev-parse --short HEAD"
+format = "[](fg:blue bg:yellow)[  $output ± ](bg:yellow fg:black)[](fg:yellow)"
+shell = ["bash", "--noprofile", "--norc"]
+
+[custom.cap_plain]
+when = "! git rev-parse --is-inside-work-tree >/dev/null 2>&1"
+format = "[](fg:blue)"
+shell = ["bash", "--noprofile", "--norc"]
+
+[character]
+disabled = true
