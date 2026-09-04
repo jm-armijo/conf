@@ -1,8 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Never runs agnoster: expected-prompts/ is the spec, not a derivation.
-
 require 'fileutils'
 require 'tmpdir'
 
