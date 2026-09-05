@@ -93,6 +93,10 @@ class Fixture
     repository? ? File.join(@root, 'home', 'code', 'conf') : '/tmp'
   end
 
+  def exit_status
+    failed_command? ? 1 : 0
+  end
+
   def build
     return self unless repository?
 
@@ -117,6 +121,10 @@ class Fixture
 
   def detached?
     @state == 'detached-head'
+  end
+
+  def failed_command?
+    @state == 'exit-nonzero'
   end
 
   def dirty!
@@ -184,7 +192,7 @@ class Prompt
   end
 
   def command
-    ['starship', 'prompt', '--status=0', '--jobs=0']
+    ['starship', 'prompt', "--status=#{@fixture.exit_status}", '--jobs=0']
   end
 end
 

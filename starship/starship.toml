@@ -5,6 +5,7 @@
 # with it, so no arrow is stranded in the colour of a segment that is gone.
 
 format = """\
+$status\
 $directory\
 ${custom.directory_terminator}\
 ${custom.branch_clean}\
@@ -37,6 +38,12 @@ when = "test -n \"$(git status --porcelain 2>/dev/null)\" && git rev-parse --is-
 command = "git branch --show-current | grep . || git rev-parse --short HEAD"
 format = "[](fg:blue bg:yellow)[  $output ± ](fg:black bg:yellow)[ ](fg:yellow)"
 shell = ["bash", "--noprofile", "--norc"]
+
+# Owns its own trailing arrow so a zero status leaves the prompt untouched.
+[status]
+disabled = false
+symbol = "✘"
+format = "[ ](bg:black)[$symbol ](fg:red bg:black)[](fg:black bg:blue)"
 
 [character]
 disabled = true
