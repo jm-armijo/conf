@@ -5,8 +5,12 @@ require 'fileutils'
 require 'tmpdir'
 
 Run = Struct.new(:foreground, :background, :text) do
+  # A detached HEAD renders the commit it is sitting on, which differs every
+  # time the fixture is built, so the expectation pins the shape not the value.
+  SHA = /\b[0-9a-f]{7,40}\b/.freeze
+
   def to_s
-    format("fg=%s bg=%s '%s'", name(foreground), name(background), text)
+    format("fg=%s bg=%s '%s'", name(foreground), name(background), text.gsub(SHA, '<sha>'))
   end
 
   private
@@ -97,6 +101,7 @@ class Fixture
     git 'init', '--initial-branch', BRANCH
     git 'commit', '--allow-empty', '--message', 'root'
     dirty! if dirty?
+    detach! if detached?
     self
   end
 
@@ -110,8 +115,16 @@ class Fixture
     @state == 'git-dirty'
   end
 
+  def detached?
+    @state == 'detached-head'
+  end
+
   def dirty!
     File.write(File.join(directory, 'uncommitted'), "\n")
+  end
+
+  def detach!
+    git 'checkout', '--detach'
   end
 
   def git(*arguments)

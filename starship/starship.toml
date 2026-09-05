@@ -28,13 +28,13 @@ shell = ["bash", "--noprofile", "--norc"]
 # colour, so a dirty tree recolours the whole run by swapping the module.
 [custom.branch_clean]
 when = "test -z \"$(git status --porcelain 2>/dev/null)\" && git rev-parse --is-inside-work-tree >/dev/null 2>&1"
-command = "git branch --show-current"
+command = "git branch --show-current | grep . || git rev-parse --short HEAD"
 format = "[](fg:blue bg:green)[  $output ](fg:black bg:green)[ ](fg:green)"
 shell = ["bash", "--noprofile", "--norc"]
 
 [custom.branch_dirty]
 when = "test -n \"$(git status --porcelain 2>/dev/null)\" && git rev-parse --is-inside-work-tree >/dev/null 2>&1"
-command = "git branch --show-current"
+command = "git branch --show-current | grep . || git rev-parse --short HEAD"
 format = "[](fg:blue bg:yellow)[  $output ± ](fg:black bg:yellow)[ ](fg:yellow)"
 shell = ["bash", "--noprofile", "--norc"]
 
