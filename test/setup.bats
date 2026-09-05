@@ -1845,7 +1845,7 @@ EOF
   grep -q 'run "nerd-font" setup_nerd_font' "${BATS_TEST_DIRNAME}/../setup.sh"
 }
 
-PROMPT_STATES="non-git git-clean git-dirty detached-head"
+PROMPT_STATES="non-git git-clean git-dirty detached-head exit-nonzero"
 
 @test "every prompt state has an expectation file with a sequence in it" {
   local dir state body
