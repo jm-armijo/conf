@@ -1845,7 +1845,7 @@ EOF
   grep -q 'run "nerd-font" setup_nerd_font' "${BATS_TEST_DIRNAME}/../setup.sh"
 }
 
-PROMPT_STATES="non-git"
+PROMPT_STATES="non-git git-clean"
 
 @test "every prompt state has an expectation file with a sequence in it" {
   local dir state body
@@ -1854,6 +1854,18 @@ PROMPT_STATES="non-git"
     [ -f "$dir/$state" ]
     body="$(grep -cv '^#' "$dir/$state")"
     [ "$body" -gt 0 ]
+  done
+}
+
+@test "every prompt state ends with a space before the cursor" {
+  local dir state last
+  dir="${BATS_TEST_DIRNAME}/expected-prompts"
+  for state in $PROMPT_STATES; do
+    last="$(grep -v '^#' "$dir/$state" | tail -n 1)"
+    [[ "$last" == *" '" ]] || {
+      echo "state $state does not end with a space: $last" >&2
+      return 1
+    }
   done
 }
 
