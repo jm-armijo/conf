@@ -6,6 +6,7 @@
 
 format = """\
 ([ ](bg:black)$status$jobs[\uE0B0](fg:black bg:blue))\
+${custom.virtualenv}\
 $directory\
 ${custom.directory_terminator}\
 ${custom.branch_clean}\
@@ -56,3 +57,11 @@ format = "[$symbol ](fg:cyan bg:black)"
 
 [character]
 disabled = true
+
+# `when` runs in a bash subprocess, so it can only test exported variables: the
+# shell-local VIRTUAL_ENV_DISABLE_PROMPT the theme keyed off is invisible here.
+[custom.virtualenv]
+when = 'test -n "$VIRTUAL_ENV"'
+command = 'basename "$VIRTUAL_ENV"'
+format = "[ \\($output\\)](fg:black bg:blue)"
+shell = ["bash", "--noprofile", "--norc"]

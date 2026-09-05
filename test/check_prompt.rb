@@ -81,6 +81,8 @@ class Fixture
   OBJECT_FORMAT = 'sha1'
   ABBREVIATED_SHA_LENGTH = '7'
   COMMIT_TIMESTAMP = '2000-01-01T00:00:00Z'
+  VIRTUALENV_NAME = 'myenv'
+  VIRTUALENV_STATES = ['venv-active', 'venv-default-activation'].freeze
 
   def initialize(state, root)
     @state = state
@@ -101,6 +103,13 @@ class Fixture
     background_jobs? ? 1 : 0
   end
 
+  # nil unsets, so a developer working inside a real virtualenv does not leak one
+  # into the states that must render without it. The path is never opened, only
+  # its basename read, so it need not exist.
+  def virtualenv
+    { 'VIRTUAL_ENV' => (virtualenv_path if virtualenv?) }
+  end
+
   def build
     return self unless repository?
 
@@ -116,7 +125,15 @@ class Fixture
   private
 
   def repository?
-    @state != 'non-git'
+    !['non-git', *VIRTUALENV_STATES].include?(@state)
+  end
+
+  def virtualenv?
+    VIRTUALENV_STATES.include?(@state)
+  end
+
+  def virtualenv_path
+    File.join(@root, 'virtualenvs', VIRTUALENV_NAME)
   end
 
   def dirty?
@@ -196,7 +213,7 @@ class Prompt
       'STARSHIP_CONFIG' => CONFIG,
       'HOME' => File.join(@root, 'home'),
       'PWD' => @fixture.directory
-    }
+    }.merge(@fixture.virtualenv)
   end
 
   def command
