@@ -46,7 +46,19 @@ For EVERY prompt and autonomous action (including git operations, shell commands
 2. **File Scoping:** Group thoughts by the current active task (e.g., `.claude_thoughts/pr_creation.md`). If continuing a task, append to its active file.
 
 # Formatting & Code Delivery (STRICT)
-- Code Over Prose: Embed mechanical intent directly inside code blocks as inline comments. NEVER output code followed by paragraphs of prose.
+- Code Over Prose: NEVER output code followed by paragraphs of prose. If the chat
+  needs an explanation the code does not carry, it belongs in `.claude_thoughts/`,
+  not in the source file.
+- Comments Are A Last Resort (STRICT). Default to **zero** comments. A comment is a
+  confession that the code failed to say it, so first rename, extract, or restructure.
+  A comment survives review only if it states a **why** that cannot be expressed in
+  code — the load-bearing cases being a non-obvious constraint, an external-tool
+  quirk, or a rejected alternative that looks correct.
+  - Never restate the line, function, class, or test name below it.
+  - No file-header summaries, no section banners, no per-class doc lines.
+  - Budget: at most one comment per ~50 lines. Exceeding it means restructure, not explain.
+  - Before writing one, ask: would a rename or an extracted method delete this
+    comment? If yes, do that instead.
 - Typography: Use backticks for `code`/`variables` and **bold** for core concepts/state changes.
 
 # Course Correction & Clarification (STRICT)
