@@ -79,8 +79,8 @@ end
 class Fixture
   BRANCH = 'master'
   OBJECT_FORMAT = 'sha1'
-  ABBREV = '7'
-  EPOCH = '2000-01-01T00:00:00Z'
+  ABBREVIATED_SHA_LENGTH = '7'
+  COMMIT_TIMESTAMP = '2000-01-01T00:00:00Z'
 
   def initialize(state, root)
     @state = state
@@ -98,7 +98,7 @@ class Fixture
 
     FileUtils.mkdir_p(directory)
     git 'init', '--initial-branch', BRANCH, '--object-format', OBJECT_FORMAT
-    git 'config', 'core.abbrev', ABBREV
+    git 'config', 'core.abbrev', ABBREVIATED_SHA_LENGTH
     git 'commit', '--no-gpg-sign', '--allow-empty', '--message', 'root'
     dirty! if dirty?
     detach! if detached?
@@ -142,7 +142,7 @@ class Fixture
   def environment
     { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
       'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com',
-      'GIT_AUTHOR_DATE' => EPOCH, 'GIT_COMMITTER_DATE' => EPOCH }
+      'GIT_AUTHOR_DATE' => COMMIT_TIMESTAMP, 'GIT_COMMITTER_DATE' => COMMIT_TIMESTAMP }
   end
 end
 
