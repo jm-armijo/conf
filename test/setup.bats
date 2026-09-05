@@ -1958,3 +1958,118 @@ PROMPT_STATES="non-git git-clean git-dirty detached-head exit-nonzero jobs-runni
     }
   done
 }
+
+@test "the README warns that retyping the powerline separator strips it" {
+  # The glyph is invisible in most tool output, so a heredoc that silently drops
+  # it produces an expectation file that looks right and is wrong. The warning
+  # is the only thing standing between a reader and that trap.
+  local readme
+  readme="${BATS_TEST_DIRNAME}/../README.md"
+
+  grep -q 'U+E0B0' "$readme"
+  grep -qi 'retyp' "$readme"
+  grep -qiE 'copy|capture' "$readme"
+}
+
+@test "the README documents the prompt's real section order" {
+  # It claimed an aws and a context segment that starship.toml has never had.
+  local readme toml
+  readme="${BATS_TEST_DIRNAME}/../README.md"
+  toml="${BATS_TEST_DIRNAME}/../starship/starship.toml"
+
+  bats_run grep -cE '^\[(aws|kubernetes)\]' "$toml"
+  [ "$status" -ne 0 ]
+
+  bats_run grep -nE '\$aws|→ *aws|aws *→' "$readme"
+  [ "$status" -ne 0 ]
+
+  grep -q 'custom.virtualenv' "$readme"
+}
+
+@test "the README names every prompt state the suite checks" {
+  local readme state
+  readme="${BATS_TEST_DIRNAME}/../README.md"
+  for state in $PROMPT_STATES; do
+    grep -q -- "$state" "$readme" || {
+      echo "README does not mention prompt state $state" >&2
+      return 1
+    }
+  done
+}
+
+@test "the README explains why the tests stay decoupled from the theme" {
+  # Without the reason recorded, a future reader reads the ban as an oversight
+  # and wires the comparison back in.
+  local readme
+  readme="${BATS_TEST_DIRNAME}/../README.md"
+
+  grep -qi 'replica today' "$readme"
+}
+
+@test "the screenshot check is executable and not wired into pre-commit" {
+  # It needs Screen Recording permission and opens real windows, so a hook that
+  # ran it would block every commit on a GUI prompt.
+  local script lefthook
+  script="${BATS_TEST_DIRNAME}/../starship/check-glyphs.sh"
+  lefthook="${BATS_TEST_DIRNAME}/../lefthook.yml"
+
+  [ -x "$script" ]
+
+  bats_run grep -n 'check-glyphs' "$lefthook"
+  [ "$status" -ne 0 ]
+}
+
+@test "the screenshot check fails loudly when ghostty is missing" {
+  # A silent skip here is the whole failure mode: the operator believes the
+  # glyphs were confirmed when nothing was ever rendered.
+  local script
+  script="${BATS_TEST_DIRNAME}/../starship/check-glyphs.sh"
+
+  local bare
+  bare="${BATS_TEST_TMPDIR}/no-ghostty"
+  mkdir -p "$bare"
+
+  bats_run env PATH="$bare:/usr/bin:/bin" "$script"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ghostty"* ]]
+}
+
+@test "the screenshot check fails loudly rather than leaving an empty capture" {
+  # screencapture exits 0 having written nothing when permission is denied, so
+  # status alone is not evidence that a frame exists.
+  local script stub_dir out
+  script="${BATS_TEST_DIRNAME}/../starship/check-glyphs.sh"
+  stub_dir="${BATS_TEST_TMPDIR}/denied"
+  out="${BATS_TEST_TMPDIR}/shots"
+  mkdir -p "$stub_dir" "$out"
+
+  printf '#!/bin/sh\nexit 0\n' >"$stub_dir/ghostty"
+  printf '#!/bin/sh\nexit 0\n' >"$stub_dir/screencapture"
+  printf '#!/bin/sh\necho "0, 0, 100, 100"\n' >"$stub_dir/osascript"
+  printf '#!/bin/sh\nexit 0\n' >"$stub_dir/sips"
+  chmod +x "$stub_dir"/*
+
+  PATH="$stub_dir:/usr/bin:/bin" GLYPH_SHOT_DIR="$out" bats_run "$script"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no image"* ]] || [[ "$output" == *"permission"* ]]
+}
+
+@test "the screenshot check writes its capture outside the repository" {
+  # A PNG landing in the working tree gets committed by accident.
+  local script
+  script="${BATS_TEST_DIRNAME}/../starship/check-glyphs.sh"
+
+  bats_run grep -c 'GLYPH_SHOT_DIR' "$script"
+  [ "$status" -eq 0 ]
+
+  bats_run grep -nE 'GLYPH_SHOT_DIR:?=[":]*\$\{?(BATS|PWD|\.)' "$script"
+  [ "$status" -ne 0 ]
+}
+
+@test "the README documents the screenshot check and its permission" {
+  local readme
+  readme="${BATS_TEST_DIRNAME}/../README.md"
+
+  grep -q 'check-glyphs' "$readme"
+  grep -qi 'screen recording' "$readme"
+}

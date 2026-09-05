@@ -55,9 +55,9 @@ Set the terminal font in `ghostty/config` rather than in a GUI; the symlink make
 font-family = MesloLGS Nerd Font
 ```
 
-If you'd rather not install a Nerd Font, edit `starship/starship.toml`: replace the ``/``
-caps with the plain-ASCII Powerline arrow `` (or nothing), and clear the `symbol` values on
-`[git_branch]` and `[aws]`. The colours and the section order work without any of them.
+If you'd rather not install a Nerd Font, edit `starship/starship.toml`: replace the
+separator glyph in the `format` strings with a plain ASCII `>` (or nothing). The colours
+and the section order work without it.
 
 The agnoster fallback theme needs only a Powerline-patched font:
 
@@ -70,15 +70,174 @@ In iTerm2: Settings → Profiles → Text → enable *Use built-in Powerline gly
 
 ## Prompt
 
-`starship/starship.toml` is agnoster's look rebuilt on Starship: the same section
-order (`status → virtualenv → aws → context → dir → git`) and colours, drawn as
-rounded segments.
+`starship/starship.toml` is agnoster's look rebuilt on Starship — the same colours and
+segment shapes, drawn as Powerline blocks. It is a **replica of the theme, not a wrapper
+around it**: nothing at runtime reads `zsh/agnoster.zsh-theme`.
+
+The order comes from the root `format` string, and is:
+
+```
+status  jobs  virtualenv  directory  branch
+```
+
+`status` (red ✘) and `jobs` (cyan ⚙) share one black segment and a single conditional
+group, so the pair renders once if either fires and vanishes together with both.
+`virtualenv` and `directory` are blue; the branch segment is green when the tree is
+clean and yellow when it is dirty, and inside a repository it draws the closing cap that
+`custom.directory_terminator` draws outside one.
+
+agnoster also paints AWS, terraform, bzr and hg segments. Those are **deliberately not
+ported** — no repository here uses them, so they are absent from the config rather than
+present and never firing.
 
 Colours are the **basic-8 terminal names** (`blue`, `green`, `yellow`, `black`, `red`,
 `cyan`), not hex, so the `theme` line in `ghostty/config` recolours the prompt too.
 
-The git segment is two modules: `[git_branch]` is the green pill that is always there,
-and `[git_status]` a yellow one that appears beside it only when the tree is dirty.
+### The joiner rule
+
+A joiner is owned by the segment **before** the boundary, and is drawn in that segment's
+own foreground over the **next** segment's background. This is stated as a comment at the
+top of `starship.toml`, and it is what makes segments independently removable: a segment
+that vanishes takes its arrow with it, so no arrow is ever stranded in the colour of a
+segment that is gone.
+
+The consequence shows up in the expectation files. Two neighbours sharing a background
+draw **no separator at all** — `custom.virtualenv` and `[directory]` are both blue, so
+they merge into a single parsed run:
+
+```
+fg=0 bg=4 ' (myenv) /tmp '
+```
+
+That one line is the whole virtualenv-plus-directory stretch. Do not read a missing
+separator there as a bug.
+
+### How the expectations were derived
+
+The colours, order and segment text were read out of `zsh/agnoster.zsh-theme`, which is
+still tracked. A **throwaway comparator** rendered both prompts against identical
+fixtures and diffed their ANSI output until the two agreed; it was then deleted and never
+committed, because pinning the two together forever would make any deliberate future
+change to the Starship prompt fail a test, and would make the theme file undeletable. The
+goal was a **replica today, not a permanent tether**.
+
+Rebuilding that comparator, if the derivation ever needs redoing, is an afternoon:
+
+1. Render the Starship side with
+   `STARSHIP_CONFIG=starship/starship.toml starship prompt --status=<n> --jobs=<n>`,
+   run with `PWD` and `HOME` pointed at a scratch fixture.
+2. Render the theme side by sourcing `zsh/agnoster.zsh-theme` in a zsh with
+   `prompt_agnoster` called directly, against the same fixture.
+3. Parse both outputs from SGR escape sequences into **runs** — a run being a maximal
+   span of text sharing one foreground/background pair. `test/check_prompt.rb`'s
+   `Sequence` class already does exactly this and is the reference implementation;
+   it also strips zsh's `%{`/`%}` wrappers, which otherwise split runs spuriously.
+4. Diff the two run lists. Differences in run *boundaries* usually mean a joiner is
+   owned by the wrong side; differences in colour mean a segment's `fg`/`bg` is wrong.
+
+A committed test enforces that no tracked test ever sources or invokes the theme, so
+whatever you build for step 2 stays out of the repository.
+
+### The expectation harness
+
+`test/check_prompt.rb` builds a hermetic fixture in a temp directory, renders
+`starship prompt` against the tracked config, parses the result into runs, and compares
+them line-for-line against a static file under `test/expected-prompts/`. Those files are
+the **spec** — to change how the prompt looks, edit the expectation and the config in the
+same commit.
+
+Run one state:
+
+```bash
+./test/check_prompt.rb git-dirty
+```
+
+It exits 0 on a match, and on a mismatch prints the expected and actual runs that differ.
+The whole set runs as part of the suite:
+
+```bash
+bats test/
+```
+
+The states are listed in `PROMPT_STATES` in `test/setup.bats`, and are currently
+`non-git`, `git-clean`, `git-dirty`, `detached-head`, `exit-nonzero`, `jobs-running`,
+`exit-nonzero-jobs`, `venv-active` and `venv-default-activation`.
+
+Note that `starship` **exits 0 on a broken config**, reporting TOML errors only on
+stderr, so the harness treats any stderr output as a failure. Exit status alone would
+pass vacuously against a config that never parsed.
+
+### ⚠️ Adding or updating an expectation file
+
+Expectation files contain the literal Powerline separator **U+E0B0**, which is in a
+Private Use Area: most tools render it as nothing at all, and it is **silently stripped**
+if it passes through anything that retypes it.
+
+**Never write an expectation file by heredoc, by retyping, or by copying text out of a
+terminal or a diff.** A file that lost its separators looks correct in every view you
+have and is wrong. The safe routes are:
+
+- **Capture real output.** Redirect the harness's own rendering to the file.
+- **Copy an existing expectation** and edit only the ASCII around the glyph.
+- **Recover from git** — `git show HEAD:test/expected-prompts/git-clean` — which is
+  byte-exact.
+
+To confirm a file survived, count its codepoints rather than looking at it:
+
+```bash
+ruby -e 'File.read(ARGV[0]).each_char { |c| printf("U+%04X\n", c.ord) if c.ord > 127 }' \
+  test/expected-prompts/git-clean | sort | uniq -c
+```
+
+Every state should report at least one `U+E0B0`. The other non-ASCII characters are
+ordinary Unicode and survive retyping: `U+2718` ✘ (failed command), `U+2699` ⚙
+(background jobs) and `U+00B1` ± (dirty tree).
+
+Each file also carries a `# Provenance:` line recording the theme commit it was derived
+from, and a `# THIS FILE IS THE SPEC` header. A test asserts both are present.
+
+### What the ANSI comparison cannot catch
+
+Comparing escape sequences proves the prompt **emits** the right codepoints. It cannot
+prove the font can **draw** them — a missing glyph renders as a tofu box or a `?` while
+the bytes stay byte-identical. That is a font and rendering question, invisible to
+escape-sequence parsing.
+
+`starship/check-glyphs.sh` answers it, and it is **operator-invoked**: it opens real
+windows and needs a permission grant, so it is deliberately not in the pre-commit hook.
+
+```bash
+./starship/check-glyphs.sh
+```
+
+It launches a genuine Ghostty window via `ghostty -e` — the real terminal, font and
+theme, not an emulation — renders the prompt in several states, captures the screen and
+crops to the window, then prints the path of the PNG.
+
+It needs **Screen Recording** permission for the terminal you launch it from
+(System Settings → Privacy & Security → Screen Recording). Without it `screencapture`
+exits 0 having written nothing, so the script checks the file is non-empty and fails
+loudly rather than reporting a success it did not achieve.
+
+The capture is written to `$TMPDIR`, **outside the repository**, so a stray PNG cannot be
+committed; set `GLYPH_SHOT_DIR` to put it elsewhere.
+
+What the operator is looking for: every arrow between segments has a solid triangular
+shape, and the ✘ and ⚙ are drawn as symbols. A hollow rectangle, a `?`, or a blank gap
+where an arrow should be means the configured font is not a Nerd Font.
+
+**Check the banner first.** When Ghostty is already running, `ghostty -e` opens a **tab in
+the existing window**, not a new window — and the capture crops to the window, so it can
+catch whichever tab happened to be in front. The script prints a `GLYPH CHECK <time>`
+banner and renders the same string into the terminal; if the image does not show it, the
+frame caught another tab and proves nothing. Re-run it with the Ghostty window in front
+and no other tab stealing focus. There is no way to target the tab directly here:
+`screencapture -l` needs a CGWindowID, and Accessibility exposes one window with a tab
+bar rather than a window per tab.
+
+Window-targeted capture is not available here — `screencapture -l` needs a CGWindowID and
+nothing on this machine can list one — so the script captures the whole display and crops
+to the window's rectangle, which it reads through Accessibility via `osascript`.
 
 ## Claude Code
 
