@@ -87,19 +87,32 @@ class Fixture
   def directory
     # non-git exists to show the prompt outside a repository, and /tmp reliably
     # is not one. Nothing is written there, so only this state is non-hermetic.
-    @state == 'non-git' ? '/tmp' : File.join(@root, 'home', 'code', 'conf')
+    repository? ? File.join(@root, 'home', 'code', 'conf') : '/tmp'
   end
 
   def build
-    return self if @state == 'non-git'
+    return self unless repository?
 
     FileUtils.mkdir_p(directory)
     git 'init', '--initial-branch', BRANCH
     git 'commit', '--allow-empty', '--message', 'root'
+    dirty! if dirty?
     self
   end
 
   private
+
+  def repository?
+    @state != 'non-git'
+  end
+
+  def dirty?
+    @state == 'git-dirty'
+  end
+
+  def dirty!
+    File.write(File.join(directory, 'uncommitted'), "\n")
+  end
 
   def git(*arguments)
     # Repository-level identity keeps the fixture off the machine's git config,
