@@ -97,6 +97,10 @@ class Fixture
     failed_command? ? 1 : 0
   end
 
+  def job_count
+    background_jobs? ? 1 : 0
+  end
+
   def build
     return self unless repository?
 
@@ -124,7 +128,11 @@ class Fixture
   end
 
   def failed_command?
-    @state == 'exit-nonzero'
+    ['exit-nonzero', 'exit-nonzero-jobs'].include?(@state)
+  end
+
+  def background_jobs?
+    ['jobs-running', 'exit-nonzero-jobs'].include?(@state)
   end
 
   def dirty!
@@ -192,7 +200,7 @@ class Prompt
   end
 
   def command
-    ['starship', 'prompt', "--status=#{@fixture.exit_status}", '--jobs=0']
+    ['starship', 'prompt', "--status=#{@fixture.exit_status}", "--jobs=#{@fixture.job_count}"]
   end
 end
 

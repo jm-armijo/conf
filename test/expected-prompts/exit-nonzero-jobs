@@ -1,0 +1,10 @@
+# THIS FILE IS THE SPEC. To change how the prompt looks, edit this file and
+# starship.toml in the same commit.
+# Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc, prompt_status with RETVAL=1 and one background job.
+fg=None bg=0 ' '
+fg=1 bg=0 '✘ '
+fg=6 bg=0 '⚙ '
+fg=0 bg=4 ' ~/code/conf '
+fg=4 bg=2 ''
+fg=0 bg=2 '  master '
+fg=2 bg=None ' '
