@@ -1,0 +1,9 @@
+# THIS FILE IS THE SPEC. To change how the prompt looks, edit this file and
+# starship.toml in the same commit.
+# Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
+# The sha is real, not a stand-in: check_prompt.rb pins the fixture's object
+# format, core.abbrev and commit dates, so the root commit is always this one.
+fg=0 bg=4 ' ~/code/conf '
+fg=4 bg=2 ''
+fg=0 bg=2 '  10fb527 '
+fg=2 bg=None ' '

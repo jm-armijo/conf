@@ -1845,7 +1845,7 @@ EOF
   grep -q 'run "nerd-font" setup_nerd_font' "${BATS_TEST_DIRNAME}/../setup.sh"
 }
 
-PROMPT_STATES="non-git git-clean git-dirty"
+PROMPT_STATES="non-git git-clean git-dirty detached-head"
 
 @test "every prompt state has an expectation file with a sequence in it" {
   local dir state body
@@ -1867,6 +1867,34 @@ PROMPT_STATES="non-git git-clean git-dirty"
       return 1
     }
   done
+}
+
+@test "no expectation file substitutes a placeholder for a rendered value" {
+  local dir state
+  dir="${BATS_TEST_DIRNAME}/expected-prompts"
+  for state in $PROMPT_STATES; do
+    grep -v '^#' "$dir/$state" | grep -q '<[a-z]*>' && {
+      echo "state $state holds a placeholder instead of a rendered value" >&2
+      return 1
+    }
+  done
+  return 0
+}
+
+@test "the fixture commits without signing" {
+  # A global commit.gpgsign aborts the commit outright on a machine with no
+  # secret key, which the sha pins cannot catch: signing decides whether the
+  # commit exists, not what its sha is.
+  local repo
+  repo="${BATS_TEST_TMPDIR}/signing"
+  mkdir -p "$repo"
+
+  HOME="$repo" GIT_CONFIG_GLOBAL="$repo/gitconfig" \
+    git config --global commit.gpgsign true
+  HOME="$repo" GIT_CONFIG_GLOBAL="$repo/gitconfig" \
+    bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" detached-head
+
+  [ "$status" -eq 0 ]
 }
 
 @test "expectation files record where the sequence came from" {

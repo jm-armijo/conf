@@ -25,7 +25,7 @@ pre-commit:
       glob: "test/**"
       run: |
         n=$(bats test/ --count)
-        if [ "$n" -lt 105 ]; then
-          echo "bats sees only $n tests (expected >= 105) -- a .bats file probably stopped parsing partway through"
+        if [ "$n" -lt 126 ]; then
+          echo "bats sees only $n tests (expected >= 126) -- a .bats file probably stopped parsing partway through"
           exit 1
         fi

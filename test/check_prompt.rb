@@ -78,6 +78,9 @@ end
 
 class Fixture
   BRANCH = 'master'
+  OBJECT_FORMAT = 'sha1'
+  ABBREVIATED_SHA_LENGTH = '7'
+  COMMIT_TIMESTAMP = '2000-01-01T00:00:00Z'
 
   def initialize(state, root)
     @state = state
@@ -94,9 +97,11 @@ class Fixture
     return self unless repository?
 
     FileUtils.mkdir_p(directory)
-    git 'init', '--initial-branch', BRANCH
-    git 'commit', '--allow-empty', '--message', 'root'
+    git 'init', '--initial-branch', BRANCH, '--object-format', OBJECT_FORMAT
+    git 'config', 'core.abbrev', ABBREVIATED_SHA_LENGTH
+    git 'commit', '--no-gpg-sign', '--allow-empty', '--message', 'root'
     dirty! if dirty?
+    detach! if detached?
     self
   end
 
@@ -110,17 +115,34 @@ class Fixture
     @state == 'git-dirty'
   end
 
+  def detached?
+    @state == 'detached-head'
+  end
+
   def dirty!
     File.write(File.join(directory, 'uncommitted'), "\n")
   end
 
+  def detach!
+    git 'checkout', '--detach'
+  end
+
   def git(*arguments)
-    # Repository-level identity keeps the fixture off the machine's git config,
-    # which may set neither name nor email and would abort the commit.
-    environment = { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
-                    'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com' }
-    system(environment, 'git', '-C', directory, *arguments,
+    system(environment, *command(*arguments),
            out: File::NULL, err: File::NULL) || raise("git #{arguments.first} failed")
+  end
+
+  def command(*arguments)
+    ['git', '-C', directory, *arguments]
+  end
+
+  # Identity keeps the fixture off the machine's git config, which may set neither
+  # name nor email and would abort the commit; pinned dates make the commit sha
+  # reproducible, which detached-head's expectation stores literally.
+  def environment
+    { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
+      'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com',
+      'GIT_AUTHOR_DATE' => COMMIT_TIMESTAMP, 'GIT_COMMITTER_DATE' => COMMIT_TIMESTAMP }
   end
 end
 
