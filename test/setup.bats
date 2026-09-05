@@ -1857,6 +1857,18 @@ PROMPT_STATES="non-git git-clean"
   done
 }
 
+@test "every prompt state ends with a space before the cursor" {
+  local dir state last
+  dir="${BATS_TEST_DIRNAME}/expected-prompts"
+  for state in $PROMPT_STATES; do
+    last="$(grep -v '^#' "$dir/$state" | tail -n 1)"
+    [[ "$last" == *" '" ]] || {
+      echo "state $state does not end with a space: $last" >&2
+      return 1
+    }
+  done
+}
+
 @test "expectation files record where the sequence came from" {
   # Provenance is the only thing tying these numbers back to a source; without
   # it a future reader cannot tell a deliberate value from a typo.

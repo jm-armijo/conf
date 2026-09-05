@@ -20,13 +20,13 @@ truncate_to_repo = false
 # draws its own cap, so an unconditional one here would double-draw.
 [custom.directory_terminator]
 when = "! git rev-parse --is-inside-work-tree >/dev/null 2>&1"
-format = "[](fg:blue)"
+format = "[ ](fg:blue)"
 shell = ["bash", "--noprofile", "--norc"]
 
 [custom.branch_clean]
 when = "git rev-parse --is-inside-work-tree >/dev/null 2>&1"
 command = "git branch --show-current"
-format = "[](fg:blue bg:green)[  $output ](fg:black bg:green)[](fg:green)"
+format = "[](fg:blue bg:green)[  $output ](fg:black bg:green)[ ](fg:green)"
 shell = ["bash", "--noprofile", "--norc"]
 
 [character]

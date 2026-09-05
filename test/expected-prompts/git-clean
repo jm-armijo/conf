@@ -4,4 +4,4 @@
 fg=0 bg=4 ' ~/code/conf '
 fg=4 bg=2 ''
 fg=0 bg=2 '  master '
-fg=2 bg=None ''
+fg=2 bg=None ' '

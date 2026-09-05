@@ -2,4 +2,4 @@
 # starship.toml in the same commit.
 # Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
 fg=0 bg=4 ' /tmp '
-fg=4 bg=None ''
+fg=4 bg=None ' '
