@@ -1,0 +1,5 @@
+# THIS FILE IS THE SPEC. To change how the prompt looks, edit this file and
+# starship.toml in the same commit.
+# Provenance: derived once from zsh/agnoster.zsh-theme at f663cdc.
+fg=0 bg=4 ' (myenv) /tmp '
+fg=4 bg=None ' '
