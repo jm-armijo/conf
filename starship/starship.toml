@@ -5,7 +5,7 @@
 # with it, so no arrow is stranded in the colour of a segment that is gone.
 
 format = """\
-$status\
+([ ](bg:black)$status$jobs[\uE0B0](fg:black bg:blue))\
 $directory\
 ${custom.directory_terminator}\
 ${custom.branch_clean}\
@@ -39,11 +39,20 @@ command = "git branch --show-current | grep . || git rev-parse --short HEAD"
 format = "[](fg:blue bg:yellow)[  $output ± ](fg:black bg:yellow)[ ](fg:yellow)"
 shell = ["bash", "--noprofile", "--norc"]
 
-# Owns its own trailing arrow so a zero status leaves the prompt untouched.
+# agnoster's prompt_status builds one symbols array and draws one segment, so the
+# leading pad and the arrow live in the root format's conditional group: it renders
+# once if either symbol module does, and vanishes with both.
 [status]
 disabled = false
 symbol = "✘"
-format = "[ ](bg:black)[$symbol ](fg:red bg:black)[](fg:black bg:blue)"
+format = "[$symbol ](fg:red bg:black)"
+
+# symbol_threshold defaults to 1, so this is empty with no jobs and the group
+# collapses on it. number_threshold is out of reach to keep the count off-prompt.
+[jobs]
+symbol = "⚙"
+number_threshold = 1000
+format = "[$symbol ](fg:cyan bg:black)"
 
 [character]
 disabled = true
