@@ -1958,3 +1958,92 @@ PROMPT_STATES="non-git git-clean git-dirty detached-head exit-nonzero jobs-runni
     }
   done
 }
+
+BOLT=$'⚡'
+
+custom_module_section() {
+  local module="$1"
+  sed -n "/^\\[custom\\.${module}\\]\$/,/^\\[/p" "${STARSHIP_TOML:-${BATS_TEST_DIRNAME}/../starship/starship.toml}"
+}
+
+root_when_line() {
+  custom_module_section root | grep '^when *=' || echo "no when line under [custom.root]"
+}
+
+@test "no prompt carries the root bolt when the user is not root" {
+  if ! command -v starship >/dev/null 2>&1; then
+    skip "starship not installed"
+  fi
+  [ "$(id -u)" -ne 0 ] || skip "running as root"
+
+  local toml="${BATS_TEST_DIRNAME}/../starship/starship.toml"
+  local repo="${BATS_TEST_TMPDIR}/bolt"
+  mkdir -p "$repo"
+  git -C "$repo" init -q .
+
+  local dir status_code jobs rendered errors
+  errors="${BATS_TEST_TMPDIR}/bolt-stderr"
+  for dir in "$repo" /tmp; do
+    for status_code in 0 1; do
+      for jobs in 0 1; do
+        rendered="$(cd "$dir" && STARSHIP_CONFIG="$toml" HOME="${BATS_TEST_TMPDIR}" \
+          starship prompt "--status=$status_code" "--jobs=$jobs" 2>"$errors")"
+        [ ! -s "$errors" ] || {
+          echo "starship wrote to stderr in $dir (status=$status_code jobs=$jobs): $(cat "$errors")" >&2
+          return 1
+        }
+        [[ "$rendered" != *"$BOLT"* ]] || {
+          echo "bolt rendered for a non-root user in $dir (status=$status_code jobs=$jobs)" >&2
+          return 1
+        }
+      done
+    done
+  done
+}
+
+@test "the prompt declares a root module that asks the kernel for the uid" {
+  local toml="${BATS_TEST_DIRNAME}/../starship/starship.toml"
+  grep -q '^\[custom\.root\]$' "$toml"
+  grep -q "$BOLT" "$toml"
+
+  local when
+  when="$(root_when_line)"
+  [[ "$when" == *'id -u'* ]] || {
+    echo "root predicate does not query the uid: $when" >&2
+    return 1
+  }
+  [[ "$when" == *0* ]] || {
+    echo "root predicate does not compare against 0: $when" >&2
+    return 1
+  }
+}
+
+@test "the root predicate cannot be forced true by the environment" {
+  # An env-var escape hatch would let a non-root shell paint the bolt, which is
+  # the one thing the segment must never do.
+  # $(...) is how the uid is read; a bare $NAME or ${NAME} is the escape hatch.
+  local when variable_expansion='\$\{?[A-Za-z_]'
+  when="$(root_when_line)"
+  [[ ! "$when" =~ $variable_expansion ]] || {
+    echo "root predicate expands a variable: $when" >&2
+    return 1
+  }
+}
+
+@test "every custom module runs its command in a bare bash" {
+  # Without --noprofile --norc every prompt sources the user's rc files.
+  local toml="${STARSHIP_TOML:-${BATS_TEST_DIRNAME}/../starship/starship.toml}"
+  local module_names module
+  module_names="$(sed -n 's/^\[custom\.\([A-Za-z_][A-Za-z0-9_]*\)\]$/\1/p' "$toml")"
+  [ -n "$module_names" ] || {
+    echo "no custom modules found in $toml" >&2
+    return 1
+  }
+
+  for module in $module_names; do
+    custom_module_section "$module" | grep -qxF 'shell = ["bash", "--noprofile", "--norc"]' || {
+      echo "[custom.$module] does not run its command in a bare bash" >&2
+      return 1
+    }
+  done
+}

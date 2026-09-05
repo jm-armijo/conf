@@ -5,7 +5,7 @@
 # with it, so no arrow is stranded in the colour of a segment that is gone.
 
 format = """\
-([ ](bg:black)$status$jobs[\uE0B0](fg:black bg:blue))\
+([ ](bg:black)$status${custom.root}$jobs[\uE0B0](fg:black bg:blue))\
 $directory\
 ${custom.directory_terminator}\
 ${custom.branch_clean}\
@@ -46,6 +46,14 @@ shell = ["bash", "--noprofile", "--norc"]
 disabled = false
 symbol = "✘"
 format = "[$symbol ](fg:red bg:black)"
+
+# agnoster paints the bolt for uid 0 only, so the predicate must be a real
+# uid query: an environment variable would let a non-root shell force it.
+[custom.root]
+when = "test \"$(id -u)\" -eq 0"
+command = "printf '⚡'"
+format = "[$output ](fg:yellow bg:black)"
+shell = ["bash", "--noprofile", "--norc"]
 
 # symbol_threshold defaults to 1, so this is empty with no jobs and the group
 # collapses on it. number_threshold is out of reach to keep the count off-prompt.
