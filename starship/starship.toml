@@ -8,6 +8,7 @@ format = """\
 $directory\
 ${custom.directory_terminator}\
 ${custom.branch_clean}\
+${custom.branch_dirty}\
 """
 add_newline = false
 
@@ -23,10 +24,18 @@ when = "! git rev-parse --is-inside-work-tree >/dev/null 2>&1"
 format = "[ ](fg:blue)"
 shell = ["bash", "--noprofile", "--norc"]
 
+# Exactly one of these fires: starship has no way to read the previous segment's
+# colour, so a dirty tree recolours the whole run by swapping the module.
 [custom.branch_clean]
-when = "git rev-parse --is-inside-work-tree >/dev/null 2>&1"
+when = "test -z \"$(git status --porcelain 2>/dev/null)\" && git rev-parse --is-inside-work-tree >/dev/null 2>&1"
 command = "git branch --show-current"
 format = "[](fg:blue bg:green)[  $output ](fg:black bg:green)[ ](fg:green)"
+shell = ["bash", "--noprofile", "--norc"]
+
+[custom.branch_dirty]
+when = "test -n \"$(git status --porcelain 2>/dev/null)\" && git rev-parse --is-inside-work-tree >/dev/null 2>&1"
+command = "git branch --show-current"
+format = "[](fg:blue bg:yellow)[  $output ± ](fg:black bg:yellow)[ ](fg:yellow)"
 shell = ["bash", "--noprofile", "--norc"]
 
 [character]
