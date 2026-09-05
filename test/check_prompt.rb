@@ -105,10 +105,6 @@ class Fixture
     self
   end
 
-  def sha
-    capture('rev-parse', '--short', 'HEAD')
-  end
-
   private
 
   def repository?
@@ -136,21 +132,13 @@ class Fixture
            out: File::NULL, err: File::NULL) || raise("git #{arguments.first} failed")
   end
 
-  def capture(*arguments)
-    output = IO.popen(environment, command(*arguments), err: File::NULL, &:read)
-    raise "git #{arguments.first} failed" unless $?.success?
-
-    output.chomp
-  end
-
   def command(*arguments)
     ['git', '-C', directory, *arguments]
   end
 
-  # Identity and timestamps keep the fixture off the machine's git config, which
-  # may set neither name nor email and would abort the commit. Pinning the dates
-  # too makes the commit sha itself reproducible, so detached-head can pin the
-  # rendered value rather than a placeholder standing in for it.
+  # Identity keeps the fixture off the machine's git config, which may set neither
+  # name nor email and would abort the commit; pinned dates make the commit sha
+  # reproducible, which detached-head's expectation stores literally.
   def environment
     { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
       'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com',

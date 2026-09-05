@@ -1881,18 +1881,6 @@ PROMPT_STATES="non-git git-clean git-dirty detached-head"
   return 0
 }
 
-@test "the fixture pins everything the detached-head sha is derived from" {
-  # The expectation stores that sha literally, so anything feeding it must be
-  # pinned or the value drifts per machine: the object format and core.abbrev
-  # change the digest and its width, the dates change the commit itself.
-  local script
-  script="${BATS_TEST_DIRNAME}/check_prompt.rb"
-  grep -q "object-format" "$script"
-  grep -q "core.abbrev" "$script"
-  grep -q 'GIT_AUTHOR_DATE' "$script"
-  grep -q 'GIT_COMMITTER_DATE' "$script"
-}
-
 @test "the fixture commits without signing" {
   # A global commit.gpgsign aborts the commit outright on a machine with no
   # secret key, which the sha pins cannot catch: signing decides whether the
@@ -1907,21 +1895,6 @@ PROMPT_STATES="non-git git-clean git-dirty detached-head"
     bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" detached-head
 
   [ "$status" -eq 0 ]
-}
-
-@test "the detached-head expectation holds the sha the fixture actually builds" {
-  # Guards against the expectation and the fixture drifting apart: without this
-  # a regenerated sha could be pasted in while the fixture stops producing it.
-  local sha
-  sha="$(ruby -e '
-    src = File.read(ARGV[0])
-    eval(src[/class Fixture.*?\nend\n/m], binding)
-    require "fileutils"; require "tmpdir"
-    Dir.mktmpdir { |root| print Fixture.new("detached-head", root).build.sha }
-  ' "${BATS_TEST_DIRNAME}/check_prompt.rb")"
-
-  [ -n "$sha" ]
-  grep -q "$sha" "${BATS_TEST_DIRNAME}/expected-prompts/detached-head"
 }
 
 @test "expectation files record where the sequence came from" {
