@@ -61,7 +61,6 @@
     "lua-lsp@claude-plugins-official": true,
     "ruby-lsp@claude-plugins-official": true
   },
-  "viewMode": "focus",
   "alwaysThinkingEnabled": false,
   "autoCompactWindow": 200000,
   "skipDangerousModePermissionPrompt": true,
