@@ -1869,6 +1869,61 @@ PROMPT_STATES="non-git git-clean git-dirty detached-head"
   done
 }
 
+@test "no expectation file substitutes a placeholder for a rendered value" {
+  local dir state
+  dir="${BATS_TEST_DIRNAME}/expected-prompts"
+  for state in $PROMPT_STATES; do
+    grep -v '^#' "$dir/$state" | grep -q '<[a-z]*>' && {
+      echo "state $state holds a placeholder instead of a rendered value" >&2
+      return 1
+    }
+  done
+  return 0
+}
+
+@test "the fixture pins everything the detached-head sha is derived from" {
+  # The expectation stores that sha literally, so anything feeding it must be
+  # pinned or the value drifts per machine: the object format and core.abbrev
+  # change the digest and its width, the dates change the commit itself.
+  local script
+  script="${BATS_TEST_DIRNAME}/check_prompt.rb"
+  grep -q "object-format" "$script"
+  grep -q "core.abbrev" "$script"
+  grep -q 'GIT_AUTHOR_DATE' "$script"
+  grep -q 'GIT_COMMITTER_DATE' "$script"
+}
+
+@test "the fixture commits without signing" {
+  # A global commit.gpgsign aborts the commit outright on a machine with no
+  # secret key, which the sha pins cannot catch: signing decides whether the
+  # commit exists, not what its sha is.
+  local repo
+  repo="${BATS_TEST_TMPDIR}/signing"
+  mkdir -p "$repo"
+
+  HOME="$repo" GIT_CONFIG_GLOBAL="$repo/gitconfig" \
+    git config --global commit.gpgsign true
+  HOME="$repo" GIT_CONFIG_GLOBAL="$repo/gitconfig" \
+    bats_run "${BATS_TEST_DIRNAME}/check_prompt.rb" detached-head
+
+  [ "$status" -eq 0 ]
+}
+
+@test "the detached-head expectation holds the sha the fixture actually builds" {
+  # Guards against the expectation and the fixture drifting apart: without this
+  # a regenerated sha could be pasted in while the fixture stops producing it.
+  local sha
+  sha="$(ruby -e '
+    src = File.read(ARGV[0])
+    eval(src[/class Fixture.*?\nend\n/m], binding)
+    require "fileutils"; require "tmpdir"
+    Dir.mktmpdir { |root| print Fixture.new("detached-head", root).build.sha }
+  ' "${BATS_TEST_DIRNAME}/check_prompt.rb")"
+
+  [ -n "$sha" ]
+  grep -q "$sha" "${BATS_TEST_DIRNAME}/expected-prompts/detached-head"
+}
+
 @test "expectation files record where the sequence came from" {
   # Provenance is the only thing tying these numbers back to a source; without
   # it a future reader cannot tell a deliberate value from a typo.

@@ -5,12 +5,8 @@ require 'fileutils'
 require 'tmpdir'
 
 Run = Struct.new(:foreground, :background, :text) do
-  # A detached HEAD renders the commit it is sitting on, which differs every
-  # time the fixture is built, so the expectation pins the shape not the value.
-  SHA = /\b[0-9a-f]{7,40}\b/.freeze
-
   def to_s
-    format("fg=%s bg=%s '%s'", name(foreground), name(background), text.gsub(SHA, '<sha>'))
+    format("fg=%s bg=%s '%s'", name(foreground), name(background), text)
   end
 
   private
@@ -82,6 +78,9 @@ end
 
 class Fixture
   BRANCH = 'master'
+  OBJECT_FORMAT = 'sha1'
+  ABBREV = '7'
+  EPOCH = '2000-01-01T00:00:00Z'
 
   def initialize(state, root)
     @state = state
@@ -98,11 +97,16 @@ class Fixture
     return self unless repository?
 
     FileUtils.mkdir_p(directory)
-    git 'init', '--initial-branch', BRANCH
-    git 'commit', '--allow-empty', '--message', 'root'
+    git 'init', '--initial-branch', BRANCH, '--object-format', OBJECT_FORMAT
+    git 'config', 'core.abbrev', ABBREV
+    git 'commit', '--no-gpg-sign', '--allow-empty', '--message', 'root'
     dirty! if dirty?
     detach! if detached?
     self
+  end
+
+  def sha
+    capture('rev-parse', '--short', 'HEAD')
   end
 
   private
@@ -128,12 +132,29 @@ class Fixture
   end
 
   def git(*arguments)
-    # Repository-level identity keeps the fixture off the machine's git config,
-    # which may set neither name nor email and would abort the commit.
-    environment = { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
-                    'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com' }
-    system(environment, 'git', '-C', directory, *arguments,
+    system(environment, *command(*arguments),
            out: File::NULL, err: File::NULL) || raise("git #{arguments.first} failed")
+  end
+
+  def capture(*arguments)
+    output = IO.popen(environment, command(*arguments), err: File::NULL, &:read)
+    raise "git #{arguments.first} failed" unless $?.success?
+
+    output.chomp
+  end
+
+  def command(*arguments)
+    ['git', '-C', directory, *arguments]
+  end
+
+  # Identity and timestamps keep the fixture off the machine's git config, which
+  # may set neither name nor email and would abort the commit. Pinning the dates
+  # too makes the commit sha itself reproducible, so detached-head can pin the
+  # rendered value rather than a placeholder standing in for it.
+  def environment
+    { 'GIT_AUTHOR_NAME' => 'test', 'GIT_AUTHOR_EMAIL' => 'test@example.com',
+      'GIT_COMMITTER_NAME' => 'test', 'GIT_COMMITTER_EMAIL' => 'test@example.com',
+      'GIT_AUTHOR_DATE' => EPOCH, 'GIT_COMMITTER_DATE' => EPOCH }
   end
 end
 
