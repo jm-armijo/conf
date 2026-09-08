@@ -99,6 +99,46 @@ setup_ghostty() {
   link "$REPO_DIR/ghostty/config" "$HOME/.config/ghostty/config"
 }
 
+# Separate from setup_ghostty so a refused permission never costs the symlink.
+# Ghostty has no +reload-config action and its +new-window is unsupported on
+# macOS, so the only way in is the app's own reload_config keybind (cmd+shift+,)
+# driven through System Events — which is what raises the permission prompt.
+setup_ghostty_reload() {
+  if ! command -v ghostty >/dev/null 2>&1; then
+    echo "ok:   ghostty not installed — nothing to reload"
+    return 0
+  fi
+
+  if ! pgrep -xq ghostty; then
+    echo "ok:   ghostty not running — config loads on next launch"
+    return 0
+  fi
+
+  # osascript exits 0 even when System Events cannot see the process or the
+  # permission is refused, so the reload is confirmed by asking for state back
+  # on stdout — never by exit status.
+  if [[ "$(osascript -e 'tell application "System Events" to exists process "ghostty"' 2>/dev/null)" != "true" ]]; then
+    echo "error: System Events cannot see ghostty — approve the macOS prompt"
+    echo "       (System Settings > Privacy & Security > Accessibility, and"
+    echo "       Automation), then re-run, or press cmd+shift+, in Ghostty."
+    return 1
+  fi
+
+  # keystroke goes to the frontmost app, not to the process named in the tell
+  # block, so Ghostty must be raised first or the reload lands in another app.
+  osascript -e 'tell application "Ghostty" to activate' >/dev/null 2>&1
+  if [[ "$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null)" != "ghostty" ]]; then
+    echo "error: could not bring ghostty to the front; skipping the reload"
+    echo "       rather than sending cmd+shift+, to another app."
+    echo "       Press cmd+shift+, in Ghostty to apply the config."
+    return 1
+  fi
+
+  osascript -e 'tell application "System Events" to tell process "ghostty" to keystroke "," using {command down, shift down}' >/dev/null 2>&1
+
+  echo "ghostty: reloaded config"
+}
+
 setup_magnet() {
   # `defaults import`, not a symlink: cfprefsd rewrites the plist atomically and
   # would clobber one.
@@ -181,6 +221,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run "nerd-font" setup_nerd_font
   run "git" setup_git
   run "ghostty" setup_ghostty
+  run "ghostty-reload" setup_ghostty_reload
   run "magnet" setup_magnet
   run "obs" setup_obs
   run "claude" setup_claude

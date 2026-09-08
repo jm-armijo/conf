@@ -1958,3 +1958,138 @@ PROMPT_STATES="non-git git-clean git-dirty detached-head exit-nonzero jobs-runni
     }
   done
 }
+
+ghostty_reload_env() {
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "$HOME"
+
+  export OSASCRIPT_LOG="${BATS_TEST_TMPDIR}/osascript.log"
+  export PGREP_RUNNING="${BATS_TEST_TMPDIR}/pgrep.running"
+  export SE_BLIND="${BATS_TEST_TMPDIR}/se.blind"
+  export SE_NOT_FRONTMOST="${BATS_TEST_TMPDIR}/se.notfront"
+
+  STUB_BIN="${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "$STUB_BIN"
+  export PATH="$STUB_BIN:/usr/bin:/bin"
+}
+
+stub_ghostty() {
+  printf '#!/bin/bash\nexit 0\n' >"$STUB_BIN/ghostty"
+  chmod +x "$STUB_BIN/ghostty"
+}
+
+# PGREP_RUNNING marks ghostty as a live process, for the reload branch.
+stub_pgrep() {
+  cat >"$STUB_BIN/pgrep" <<'STUB'
+#!/bin/bash
+[[ -e "$PGREP_RUNNING" ]] && exit 0
+exit 1
+STUB
+  chmod +x "$STUB_BIN/pgrep"
+}
+
+# Real osascript exits 0 even when System Events is blind or the permission is
+# refused, so this stub always exits 0 and varies only stdout.
+stub_osascript() {
+  cat >"$STUB_BIN/osascript" <<'STUB'
+#!/bin/bash
+echo "$*" >>"$OSASCRIPT_LOG"
+case "$*" in
+  *"exists process"*)
+    [[ -e "$SE_BLIND" ]] && echo "false" || echo "true"
+    ;;
+  *frontmost*)
+    [[ -e "$SE_NOT_FRONTMOST" ]] && echo "TextEdit" || echo "ghostty"
+    ;;
+esac
+exit 0
+STUB
+  chmod +x "$STUB_BIN/osascript"
+}
+
+@test "setup_ghostty_reload skips without touching osascript when ghostty is absent" {
+  ghostty_reload_env
+  stub_pgrep
+  stub_osascript
+
+  bats_run setup_ghostty_reload
+  [ "$status" -eq 0 ]
+  [ ! -e "$OSASCRIPT_LOG" ]
+  [[ "$output" == ok:* ]]
+}
+
+@test "setup_ghostty_reload does not reload when ghostty is not running" {
+  ghostty_reload_env
+  stub_ghostty
+  stub_pgrep
+  stub_osascript
+
+  bats_run setup_ghostty_reload
+  [ "$status" -eq 0 ]
+  [ ! -e "$OSASCRIPT_LOG" ]
+  [[ "$output" == *"next launch"* ]]
+}
+
+@test "setup_ghostty_reload sends the reload keybind when ghostty is running" {
+  ghostty_reload_env
+  stub_ghostty
+  stub_pgrep
+  stub_osascript
+  touch "$PGREP_RUNNING"
+
+  bats_run setup_ghostty_reload
+  [ "$status" -eq 0 ]
+  grep -q "command down" "$OSASCRIPT_LOG"
+  grep -q "shift down" "$OSASCRIPT_LOG"
+}
+
+# osascript exits 0 when the permission is refused, so a status-only assertion
+# passes vacuously; the failure has to be detected from stdout.
+@test "setup_ghostty_reload fails when System Events cannot see ghostty" {
+  ghostty_reload_env
+  stub_ghostty
+  stub_pgrep
+  stub_osascript
+  touch "$PGREP_RUNNING"
+  touch "$SE_BLIND"
+
+  bats_run setup_ghostty_reload
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Accessibility"* ]]
+  ! grep -q "keystroke" "$OSASCRIPT_LOG"
+}
+
+@test "setup_ghostty_reload raises ghostty before sending the keystroke" {
+  ghostty_reload_env
+  stub_ghostty
+  stub_pgrep
+  stub_osascript
+  touch "$PGREP_RUNNING"
+
+  bats_run setup_ghostty_reload
+  [ "$status" -eq 0 ]
+  local activate keystroke
+  activate=$(grep -n "activate" "$OSASCRIPT_LOG" | head -1 | cut -d: -f1)
+  keystroke=$(grep -n "keystroke" "$OSASCRIPT_LOG" | head -1 | cut -d: -f1)
+  [ -n "$activate" ]
+  [ -n "$keystroke" ]
+  [ "$activate" -lt "$keystroke" ]
+}
+
+@test "setup_ghostty_reload never sends the keystroke to another frontmost app" {
+  ghostty_reload_env
+  stub_ghostty
+  stub_pgrep
+  stub_osascript
+  touch "$PGREP_RUNNING"
+  touch "$SE_NOT_FRONTMOST"
+
+  bats_run setup_ghostty_reload
+  [ "$status" -eq 1 ]
+  ! grep -q "keystroke" "$OSASCRIPT_LOG"
+}
+
+@test "the ghostty reload is a separate run step from the symlink" {
+  grep -q 'run "ghostty" setup_ghostty$' "${BATS_TEST_DIRNAME}/../setup.sh"
+  grep -q 'run "ghostty-reload" setup_ghostty_reload$' "${BATS_TEST_DIRNAME}/../setup.sh"
+}
