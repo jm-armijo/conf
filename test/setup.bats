@@ -197,6 +197,236 @@ STUB
   [ ! -e "$HOME/.config/starship.toml" ]
 }
 
+omz_env() {
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "$HOME"
+
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR"
+
+  export ZSH="$HOME/.oh-my-zsh"
+  export ZSH_CUSTOM="$ZSH/custom"
+
+  export INSTALL_LOG="${BATS_TEST_TMPDIR}/install.log"
+  export GIT_LOG="${BATS_TEST_TMPDIR}/git.log"
+  export GIT_FAIL_DIR="${BATS_TEST_TMPDIR}/git.fail"
+  mkdir -p "$GIT_FAIL_DIR"
+
+  STUB_BIN="${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "$STUB_BIN"
+  export PATH="$STUB_BIN:/usr/bin:/bin"
+}
+
+stub_omz_git() {
+  cat >"$STUB_BIN/git" <<'STUB'
+#!/bin/bash
+echo "$*" >>"$GIT_LOG"
+if [[ "$1" == "clone" ]]; then
+  target="${@: -1}"
+  if [[ -e "$GIT_FAIL_DIR/$(basename "$target")" ]]; then
+    exit 1
+  fi
+  mkdir -p "$target"
+fi
+exit 0
+STUB
+  chmod +x "$STUB_BIN/git"
+}
+
+stub_omz_sh() {
+  cat >"$STUB_BIN/sh" <<'STUB'
+#!/bin/bash
+{
+  echo "$*"
+  echo "KEEP_ZSHRC=${KEEP_ZSHRC:-}"
+} >>"$INSTALL_LOG"
+mkdir -p "$ZSH"
+exit 0
+STUB
+  chmod +x "$STUB_BIN/sh"
+}
+
+stub_omz_curl() {
+  cat >"$STUB_BIN/curl" <<'STUB'
+#!/bin/bash
+echo "# fake oh-my-zsh installer"
+exit 0
+STUB
+  chmod +x "$STUB_BIN/curl"
+}
+
+stub_omz_curl_fail() {
+  cat >"$STUB_BIN/curl" <<'STUB'
+#!/bin/bash
+exit 1
+STUB
+  chmod +x "$STUB_BIN/curl"
+}
+
+stub_omz_curl_empty() {
+  cat >"$STUB_BIN/curl" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+  chmod +x "$STUB_BIN/curl"
+}
+
+@test "setup_omz is a no-op when oh-my-zsh is already installed" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  mkdir -p "$ZSH"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [ ! -e "$INSTALL_LOG" ]
+  [[ "$output" == ok:* ]]
+}
+
+@test "setup_omz runs the upstream installer when oh-my-zsh is absent" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  [ ! -d "$ZSH" ]
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [ -e "$INSTALL_LOG" ]
+  [ -d "$ZSH" ]
+}
+
+@test "setup_omz passes KEEP_ZSHRC=yes and --unattended to the installer" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  # Without KEEP_ZSHRC the installer moves an existing ~/.zshrc aside and writes
+  # its own template, eating the symlink setup_zsh already made.
+  grep -q 'KEEP_ZSHRC=yes' "$INSTALL_LOG"
+  grep -q -- '--unattended' "$INSTALL_LOG"
+}
+
+@test "setup_omz clones a missing custom plugin" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  grep -q 'zsh-syntax-highlighting' "$GIT_LOG"
+  [ -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]
+}
+
+@test "setup_omz clones each plugin from its own paired URL, not a derived one" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  grep -q 'clone --depth 1 https://github.com/zsh-users/zsh-syntax-highlighting.git' "$GIT_LOG"
+}
+
+@test "setup_omz does not re-clone a custom plugin that already exists" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  mkdir -p "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  bats_run grep -q 'clone.*zsh-syntax-highlighting' "$GIT_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "setup_omz records a plugin clone failure but still processes the rest" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  touch "$GIT_FAIL_DIR/first"
+  export OMZ_PLUGINS=(
+    "first https://example.invalid/first.git"
+    "second https://example.invalid/second.git"
+  )
+
+  bats_run setup_omz
+  [ "$status" -ne 0 ]
+  grep -q 'first' "$GIT_LOG"
+  [ ! -d "$ZSH_CUSTOM/plugins/first" ]
+  grep -q 'second' "$GIT_LOG"
+  [ -d "$ZSH_CUSTOM/plugins/second" ]
+}
+
+@test "setup_omz fails when curl cannot fetch the installer" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl_fail
+
+  bats_run setup_omz
+  [ "$status" -ne 0 ]
+  [ ! -e "$INSTALL_LOG" ]
+  [ ! -d "$ZSH" ]
+}
+
+@test "setup_omz fails when curl succeeds with an empty installer body" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl_empty
+
+  bats_run setup_omz
+  [ "$status" -ne 0 ]
+  [ ! -e "$INSTALL_LOG" ]
+  [ ! -d "$ZSH" ]
+}
+
+@test "setup_omz fails with skip: when git is missing" {
+  omz_env
+  stub_omz_sh
+  stub_omz_curl
+  [ ! -x "$STUB_BIN/git" ]
+
+  PATH="$STUB_BIN" bats_run setup_omz
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"skip: git not installed"* ]]
+}
+
+@test "setup_zsh still succeeds when oh-my-zsh is absent" {
+  omz_env
+  local repo="${BATS_TEST_TMPDIR}/zshrepo"
+  mkdir -p "$repo/zsh"
+  echo "# zshrc" >"$repo/zsh/zshrc"
+  echo "# theme" >"$repo/zsh/agnoster.zsh-theme"
+  REPO_DIR="$repo"
+  [ ! -d "$ZSH" ]
+
+  bats_run setup_zsh
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/.zshrc" ]
+  [ -L "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" ]
+}
+
+@test "setup_omz is registered before setup_zsh in setup.sh" {
+  local setup="${BATS_TEST_DIRNAME}/../setup.sh"
+  local omz_line zsh_line
+  omz_line="$(grep -n 'run "oh-my-zsh" setup_omz' "$setup" | cut -d: -f1)"
+  zsh_line="$(grep -n 'run "zsh" setup_zsh' "$setup" | cut -d: -f1)"
+  [ -n "$omz_line" ]
+  [ -n "$zsh_line" ]
+  # A fresh machine must get a real ~/.oh-my-zsh before the theme is linked into it.
+  [ "$omz_line" -lt "$zsh_line" ]
+}
+
 claude_env() {
   export HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "$HOME"

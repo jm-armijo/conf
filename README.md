@@ -14,6 +14,7 @@ cd ~/code/conf
 
 The script:
 
+- Installs **oh-my-zsh** (via the upstream installer, `KEEP_ZSHRC=yes` so it doesn't touch `~/.zshrc`) and clones the `zsh-syntax-highlighting` plugin into its custom plugins directory, skipping either step if already present.
 - Symlinks `zsh/zshrc` → `~/.zshrc` and `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
 - Installs the **Starship** prompt with `brew install starship` (skipped, with a message, if it's already there or if Homebrew isn't).
 - Symlinks `starship/starship.toml` → `~/.config/starship.toml`. This step is independent of the install above, so the config still lands where Homebrew is missing.
@@ -30,17 +31,6 @@ Existing files are backed up (renamed with a `.backup.<timestamp>` suffix) befor
 After running, restart your shell (`exec zsh`).
 
 ### Prerequisites
-
-The zsh config expects oh-my-zsh and the `zsh-syntax-highlighting` plugin:
-
-```bash
-# oh-my-zsh — see https://ohmyz.sh/#install
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-
-# zsh-syntax-highlighting plugin
-git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
-  ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-```
 
 The Starship prompt needs a **Nerd Font**. A Powerline font alone renders the rounded
 segment caps and the branch/AWS icons as boxes or blanks:

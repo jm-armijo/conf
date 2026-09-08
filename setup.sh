@@ -47,6 +47,44 @@ link() {
   echo "link: $dest -> $src"
 }
 
+setup_omz() {
+  local zsh_dir="${ZSH:-$HOME/.oh-my-zsh}"
+  local zsh_custom="${ZSH_CUSTOM:-$zsh_dir/custom}"
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "skip: git not installed — see https://git-scm.com, then re-run"
+    return 1
+  fi
+
+  if [[ -d "$zsh_dir" ]]; then
+    echo "ok:   oh-my-zsh already installed"
+  else
+    local installer
+    installer="$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" || return 1
+    if [[ -z "$installer" ]]; then
+      echo "error: installer download was empty — check network/proxy and re-run"
+      return 1
+    fi
+
+    # ~/.zshrc is already, or is about to become, a symlink into this repo.
+    # KEEP_ZSHRC stops the installer moving it aside and writing its own template.
+    KEEP_ZSHRC=yes sh -c "$installer" "" --unattended || return 1
+  fi
+
+  local plugins=("${OMZ_PLUGINS[@]:-zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git}")
+  local entry plugin url dest status=0
+  for entry in "${plugins[@]}"; do
+    read -r plugin url <<<"$entry"
+    dest="$zsh_custom/plugins/$plugin"
+    if [[ -d "$dest" ]]; then
+      continue
+    fi
+    git clone --depth 1 "$url" "$dest" || status=1
+  done
+
+  return "$status"
+}
+
 setup_zsh() {
   link "$REPO_DIR/zsh/zshrc" "$HOME/.zshrc" || return 1
   link "$REPO_DIR/zsh/agnoster.zsh-theme" "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" || return 1
@@ -215,6 +253,7 @@ setup_claude_skills() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "Setting up from $REPO_DIR"
 
+  run "oh-my-zsh" setup_omz
   run "zsh" setup_zsh
   run "starship" setup_starship
   run "starship-config" setup_starship_config

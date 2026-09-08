@@ -29,7 +29,7 @@ lefthook install          # once per clone — installs the pre-commit hook that
 - `setup.sh`'s own `run()` step-wrapper **shadows bats' built-in `run` helper**. Sourcing `setup.sh` in a test makes every later `run` fail with `Permission denied`. `test/setup.bats` aliases bats' version *before* sourcing: `eval "bats_run() $(declare -f run | tail -n +2)"`. New tests must call `bats_run`, never `run`.
 - `[[ "${BASH_SOURCE[0]}" == "$0" ]]` (`setup.sh:200`) guards the bottom execution block, so a test can source the file for `link()` and the `setup_*` functions without running the machine setup. Keep new top-level side effects inside that guard.
 
-## Core architecture: three install strategies
+## Core architecture: five install strategies
 
 The central decision is **how each app's config gets onto the machine**, chosen from how that app writes its own files. Read `setup.sh:31-58` (`link`) and the per-app comments first.
 
@@ -37,6 +37,7 @@ The central decision is **how each app's config gets onto the machine**, chosen 
 2. **Directory symlink** (OBS) — `obs/<resolution>/ → ~/Library/Application Support/obs-studio`. OBS saves via temp-then-rename, which **replaces a file symlink with a real file** but leaves a *directory* symlink intact. Never downgrade OBS to per-file symlinks.
 3. **Copy/import** (Magnet) — sandboxed Mac App Store app whose plist `cfprefsd` rewrites atomically, clobbering symlinks. Uses `defaults import`, and needs a manual `defaults export` to back changes up into the repo.
 4. **Untracked runtime state** (the statusline colour DB) — a file a *tracked script* creates, deliberately neither tracked nor linked. `~/.claude/statusline-colors.db` holds per-session colour assignments; it is machine-local by definition (a colour belongs to this laptop's set of checkouts) and meaningless elsewhere. `setup.sh` does not create it — `claude/lib/session-colors.sh` does, on first use, with `CREATE TABLE IF NOT EXISTS`. For any future one of these, its *absence must be a working state*, not an error: the statusline falls back to hashing when the DB cannot be opened.
+5. **Upstream installer** (starship's binary, oh-my-zsh) — nothing tracked to symlink; a package manager or the project's own installer owns the install and its updates.
 
 **Claude Code is strategy 1, but its destination directory is shared.** Every tracked file under `claude/` is a plain `link()`. Unlike zsh or ghostty, `~/.claude` is not a config directory — it is mostly Claude Code's runtime state (session transcripts, caches, plugin installs, shell snapshots, `history.jsonl`), machine-local and in places private. So links are **per-file, never a link of `~/.claude` itself**.
 
@@ -56,12 +57,15 @@ Unlike the other apps, `setup_claude_skills` records failures across its loop (`
 
 There is no clone-and-pull strategy any more. It existed only for Spaceship (removed), and with it went `zsh_custom_dir()`, which parsed `ZSH_CUSTOM` out of `zsh/zshrc` to find oh-my-zsh's custom themes dir. Starship isn't an oh-my-zsh theme and never goes near that directory, so nothing reads `ZSH_CUSTOM` here now.
 
+**`setup_omz` must stay registered before `setup_zsh`**, otherwise `link()`'s `mkdir -p` creates a decoy `~/.oh-my-zsh/themes/` that makes `setup_omz`'s install guard skip the real install forever. **`KEEP_ZSHRC=yes` must not be dropped**, or the installer replaces the `~/.zshrc` symlink into this repo. Both are pinned by tests.
+
 `run()` wraps each app's step and records failures instead of aborting (`set -uo pipefail`, deliberately **not** `-e`), so one broken step never blocks the rest.
 
 ## Consequences for editing
 
 - Edits to `zsh/zshrc`, `starship/starship.toml`, `git/gitconfig`, `ghostty/config`, `claude/**`, and `obs/<res>/*` are *already live* where `setup.sh` has run — no reinstall step. They still need committing.
 - **A new skill under `claude/skills/` is not installed until its name is added to the loop in `setup_claude_skills`.** Nothing globs that directory, deliberately (see above). A test asserts every name in that list has a `SKILL.md`, so a rename fails a test instead of silently dropping a skill.
+- **A new oh-my-zsh plugin is not installed until it's added to the `plugins` list in `setup_omz`, and referenced in `zsh/zshrc`'s own `plugins=(...)`.** Same explicit-opt-in shape as the skills list — each entry needs its own url, since the org varies per plugin.
 - **The statusline's colour comes from a database, not a hash.** `claude/lib/session-colors.sh` records a colour per directory+branch in `~/.claude/statusline-colors.db` and **never reassigns an existing row**. That permanence is the feature: repainting a live session mid-work is a bug. Three details are load-bearing, each with a mutation-checked regression test:
   - `PRAGMA busy_timeout=10000` — without it a locked write is abandoned *silently* (11 of 24 parallel rows lost, zero stderr) or prints `database is locked`, discarding the whole statusline. The test asserts on **rows written**; a stderr-only assertion passes vacuously. The ceiling is a backstop against a machine stall, not a contention budget — real waits are sub-millisecond.
   - `INSERT OR IGNORE` — `OR REPLACE` lets the loser of a race overwrite the winner and repaint a live session.
