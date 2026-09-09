@@ -413,7 +413,7 @@ STUB
   bats_run setup_omz
   [ "$status" -eq 0 ]
   # Without KEEP_ZSHRC the installer moves an existing ~/.zshrc aside and writes
-  # its own template, eating the symlink setup_zsh already made.
+  # its own template, eating the machine-local file that sources this repo.
   grep -q 'KEEP_ZSHRC=yes' "$INSTALL_LOG"
   grep -q -- '--unattended' "$INSTALL_LOG"
 }
@@ -508,19 +508,91 @@ STUB
   [[ "$output" == *"skip: git not installed"* ]]
 }
 
-@test "setup_zsh still succeeds when oh-my-zsh is absent" {
+zshrc_env() {
   omz_env
-  local repo="${BATS_TEST_TMPDIR}/zshrepo"
-  mkdir -p "$repo/zsh"
-  echo "# zshrc" >"$repo/zsh/zshrc"
-  echo "# theme" >"$repo/zsh/agnoster.zsh-theme"
-  REPO_DIR="$repo"
+  REPO_DIR="${BATS_TEST_TMPDIR}/zshrepo"
+  mkdir -p "$REPO_DIR/zsh"
+  echo "# zshrc" >"$REPO_DIR/zsh/zshrc"
+  echo "# theme" >"$REPO_DIR/zsh/agnoster.zsh-theme"
+}
+
+source_line_count() {
+  grep -c "source \"$REPO_DIR/zsh/zshrc\"" "$HOME/.zshrc"
+}
+
+@test "setup_zsh still succeeds when oh-my-zsh is absent" {
+  zshrc_env
   [ ! -d "$ZSH" ]
 
   bats_run setup_zsh
   [ "$status" -eq 0 ]
-  [ -L "$HOME/.zshrc" ]
+  [ -f "$HOME/.zshrc" ]
+  [ ! -L "$HOME/.zshrc" ]
   [ -L "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" ]
+}
+
+@test "setup_zsh creates ~/.zshrc as a real file sourcing the tracked zshrc" {
+  zshrc_env
+  [ ! -e "$HOME/.zshrc" ]
+
+  bats_run setup_zsh
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.zshrc" ]
+  [ ! -L "$HOME/.zshrc" ]
+  [ "$(source_line_count)" = "1" ]
+}
+
+@test "setup_zsh replaces a symlinked ~/.zshrc with a real file, backing it up" {
+  zshrc_env
+  ln -s "$REPO_DIR/zsh/zshrc" "$HOME/.zshrc"
+
+  bats_run setup_zsh
+  [ "$status" -eq 0 ]
+  [ ! -L "$HOME/.zshrc" ]
+  [ -f "$HOME/.zshrc" ]
+  [ "$(source_line_count)" = "1" ]
+
+  local backups=("$HOME"/.zshrc.backup.*)
+  [ -L "${backups[0]}" ]
+  [ "$(readlink "${backups[0]}")" = "$REPO_DIR/zsh/zshrc" ]
+}
+
+@test "setup_zsh appends to a real ~/.zshrc without touching its content" {
+  zshrc_env
+  echo 'export PATH="/some/local/bin:$PATH"' >"$HOME/.zshrc"
+
+  bats_run setup_zsh
+  [ "$status" -eq 0 ]
+  grep -qx 'export PATH="/some/local/bin:$PATH"' "$HOME/.zshrc"
+  [ "$(source_line_count)" = "1" ]
+}
+
+@test "setup_zsh appends the source line exactly once across re-runs" {
+  zshrc_env
+  echo 'export PATH="/some/local/bin:$PATH"' >"$HOME/.zshrc"
+
+  setup_zsh
+  local first
+  first="$(cat "$HOME/.zshrc")"
+
+  bats_run setup_zsh
+  [ "$status" -eq 0 ]
+  [ "$(source_line_count)" = "1" ]
+  [ "$(cat "$HOME/.zshrc")" = "$first" ]
+}
+
+@test "setup_zsh never writes to the tracked zsh/zshrc" {
+  zshrc_env
+  local tracked="$REPO_DIR/zsh/zshrc"
+  local before
+  before="$(cat "$tracked")"
+  ln -s "$tracked" "$HOME/.zshrc"
+
+  bats_run setup_zsh
+  [ "$status" -eq 0 ]
+  [ "$(cat "$tracked")" = "$before" ]
+  bats_run grep -q 'source' "$tracked"
+  [ "$status" -ne 0 ]
 }
 
 @test "setup_omz is registered before setup_zsh in setup.sh" {

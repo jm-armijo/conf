@@ -15,7 +15,7 @@ cd ~/code/conf
 The script:
 
 - Installs **oh-my-zsh** (via the upstream installer, `KEEP_ZSHRC=yes` so it doesn't touch `~/.zshrc`) and clones the `zsh-syntax-highlighting` plugin into its custom plugins directory, skipping either step if already present.
-- Symlinks `zsh/zshrc` → `~/.zshrc` and `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
+- Makes `~/.zshrc` a real, machine-local file that does `source <repo>/zsh/zshrc` — appending that line if the file already exists, never overwriting it, and backing up a previous symlink first. Symlinks `zsh/agnoster.zsh-theme` → `~/.oh-my-zsh/themes/agnoster.zsh-theme`.
 - Installs the **Starship** prompt with `brew install starship` (skipped, with a message, if it's already there or if Homebrew isn't).
 - Symlinks `starship/starship.toml` → `~/.config/starship.toml`. This step is independent of the install above, so the config still lands where Homebrew is missing.
 - Symlinks `git/gitconfig` → `~/.gitconfig`.
@@ -25,6 +25,8 @@ The script:
 The clone location isn't baked in anywhere, so any directory works.
 
 Because these are symlinks, any later edit to your live config is saved straight back into the repo — including `git config --global` writes, which follow the symlink into `git/gitconfig`.
+
+**`~/.zshrc` is the exception, on purpose.** It is a real file this repo does not track, so installers that append to it (Docker Desktop, among others) write machine-specific paths to your machine instead of into the repo. Shared zsh config lives at `zsh/zshrc` and is edited there.
 
 Existing files are backed up (renamed with a `.backup.<timestamp>` suffix) before being replaced. The script is idempotent — safe to re-run. **A failing step does not abort the rest**: the script lists what failed at the end and exits non-zero.
 
@@ -363,7 +365,7 @@ cp -R "$OBS"/. "obs/$RES"/         # .gitignore keeps only the portable subset
 
 ## Editing config later
 
-- **zsh** — edit `~/.zshrc` or the theme directly; the symlink means changes land in the repo automatically. Commit when ready.
+- **zsh** — edit `zsh/zshrc` in the repo; `~/.zshrc` sources it, so changes are live on the next shell. `~/.zshrc` itself is yours and untracked — put machine-local lines (work paths, per-laptop exports, whatever an installer appends) there, and they stay off every other machine. Commit `zsh/zshrc` when ready.
 - **prompt** — edit `starship/starship.toml` (sections, colours, prompt character, truncation). It's symlink-live like the rest, so edits apply on the next prompt; no reinstall. To revert to the old prompt, set `ZSH_THEME="agnoster"` in `zsh/zshrc` — `zsh/agnoster.zsh-theme` is still tracked and still installed, and the Starship init is guarded so it simply does nothing if the binary is absent.
 - **git** — edit `~/.gitconfig` or run `git config --global ...` as usual; the symlink means changes (aliases and everything else) land in `git/gitconfig` automatically. Commit when ready.
 - **ghostty** — edit `~/.config/ghostty/config` directly; the symlink means changes land in `ghostty/config` automatically. Commit when ready.
