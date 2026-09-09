@@ -108,7 +108,7 @@
                     "id": "mask_filter",
                     "versioned_id": "mask_filter_v2",
                     "settings": {
-                        "image_path": "/Users/jm/Settings/obs/image-mask.png",
+                        "image_path": "{{OBS_CONFIG_DIR}}/basic/assets/image-mask.png",
                         "opacity": 1.0
                     },
                     "mixers": 0,
@@ -329,7 +329,7 @@
                     "id": "mask_filter",
                     "versioned_id": "mask_filter_v2",
                     "settings": {
-                        "image_path": "/Users/jm/Settings/obs/image-mask.png"
+                        "image_path": "{{OBS_CONFIG_DIR}}/basic/assets/image-mask.png"
                     },
                     "mixers": 0,
                     "sync": 0,

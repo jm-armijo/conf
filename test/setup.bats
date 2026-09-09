@@ -2517,53 +2517,332 @@ STUB
   grep -q 'run "ghostty-reload" setup_ghostty_reload$' "${BATS_TEST_DIRNAME}/../setup.sh"
 }
 
-@test "setup_obs_assets links the tracked mask into ~/Settings/obs" {
-  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
-  HOME="${BATS_TEST_TMPDIR}/home"
-  mkdir -p "$REPO_DIR/obs-assets"
-  touch "$REPO_DIR/obs-assets/image-mask.png"
 
-  bats_run setup_obs_assets
-  [ "$status" -eq 0 ]
-  [ -L "$HOME/Settings/obs/image-mask.png" ]
-  [ "$(readlink "$HOME/Settings/obs/image-mask.png")" = "$REPO_DIR/obs-assets/image-mask.png" ]
+OBS_SCENE_PATH="obs/7680x2160/basic/scenes/Defautl_scene.json"
+
+mask_filter() {
+  "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" "$@"
 }
 
-@test "setup_obs_assets links the file, never the ~/Settings/obs directory" {
-  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
-  HOME="${BATS_TEST_TMPDIR}/home"
-  mkdir -p "$REPO_DIR/obs-assets"
-  touch "$REPO_DIR/obs-assets/image-mask.png"
-  mkdir -p "$HOME/Settings/obs"
-  touch "$HOME/Settings/obs/Default_scene.json"
-
-  bats_run setup_obs_assets
-  [ "$status" -eq 0 ]
-  [ ! -L "$HOME/Settings/obs" ]
-  [ -f "$HOME/Settings/obs/Default_scene.json" ]
-  [ ! -L "$HOME/Settings/obs/Default_scene.json" ]
+obs_config_dir() {
+  echo "$HOME/Library/Application Support/obs-studio"
 }
 
-@test "the mask lives outside obs/, so it is not offered as a resolution" {
-  [ ! -e "${BATS_TEST_DIRNAME}/../obs/obs-assets" ]
+# grep -c counts matching lines; the scene is one line holding two paths.
+count_occurrences() {
+  grep -oF "$1" | grep -c .
+}
+
+absolute_scene() {
+  printf '{"a":"%s/basic/assets/image-mask.png","b":"%s/basic/assets/image-mask.png"}' \
+    "$(obs_config_dir)" "$(obs_config_dir)"
+}
+
+placeholder_scene() {
+  printf '{"a":"%s/basic/assets/image-mask.png","b":"%s/basic/assets/image-mask.png"}' \
+    '{{OBS_CONFIG_DIR}}' '{{OBS_CONFIG_DIR}}'
+}
+
+# The reviewer's hard requirement: whatever the worktree holds, the content git
+# stores must never carry a username. The clean filter is what guarantees it.
+@test "the scene stored in the index holds the placeholder, never a home path" {
+  local staged
+  staged=$(git -C "${BATS_TEST_DIRNAME}/.." show ":$OBS_SCENE_PATH")
+  [ "$(count_occurrences '{{OBS_CONFIG_DIR}}/basic/assets/image-mask.png' <<<"$staged")" -eq 2 ]
+  ! grep -q '/Users/' <<<"$staged"
+}
+
+@test "gitattributes routes obs scene files through the obsmaskpath filter" {
+  grep -q '^obs/\*/basic/scenes/\*\.json filter=obsmaskpath$' \
+    "${BATS_TEST_DIRNAME}/../.gitattributes"
+}
+
+@test "clean rewrites the absolute obs config dir to the placeholder" {
+  local cleaned
+  cleaned=$(absolute_scene | mask_filter clean)
+  [ "$(count_occurrences '{{OBS_CONFIG_DIR}}' <<<"$cleaned")" -eq 2 ]
+  ! grep -qF "$(obs_config_dir)" <<<"$cleaned"
+}
+
+@test "smudge rewrites the placeholder back to the absolute obs config dir" {
+  local smudged
+  smudged=$(placeholder_scene | mask_filter smudge)
+  [ "$(count_occurrences "$(obs_config_dir)/basic/assets/image-mask.png" <<<"$smudged")" -eq 2 ]
+  ! grep -qF '{{OBS_CONFIG_DIR}}' <<<"$smudged"
+}
+
+@test "clean of smudge round-trips the placeholder form unchanged" {
+  local original round
+  original=$(placeholder_scene)
+  round=$(placeholder_scene | mask_filter smudge | mask_filter clean)
+  [ "$original" = "$round" ]
+}
+
+@test "the filter is a byte-identical passthrough with nothing to replace" {
+  local src="${BATS_TEST_TMPDIR}/plain.json"
+  printf '{"image_path": "/somewhere/else.png"}' >"$src"
+
+  mask_filter clean <"$src" >"${BATS_TEST_TMPDIR}/cleaned"
+  mask_filter smudge <"$src" >"${BATS_TEST_TMPDIR}/smudged"
+  cmp "$src" "${BATS_TEST_TMPDIR}/cleaned"
+  cmp "$src" "${BATS_TEST_TMPDIR}/smudged"
+}
+
+@test "the filter handles a home path containing spaces" {
+  HOME="${BATS_TEST_TMPDIR}/home dir"
+  [[ "$HOME" == *" "* ]]
+
+  local cleaned
+  cleaned=$(absolute_scene | mask_filter clean)
+  [ "$(count_occurrences '{{OBS_CONFIG_DIR}}' <<<"$cleaned")" -eq 2 ]
+}
+
+# A filter that errors corrupts the checkout, so an unknown mode must still
+# emit its input verbatim rather than nothing.
+@test "the filter fails open on an unexpected argument" {
+  local src="${BATS_TEST_TMPDIR}/scene.json"
+  absolute_scene >"$src"
+
+  bats_run mask_filter bogus <"$src"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(absolute_scene)" ]
+
+  bats_run mask_filter <"$src"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(absolute_scene)" ]
+}
+
+# `set -u` turns an unset HOME into an abort mid-checkout — zero bytes out and
+# the buffered input never replayed — which is the corruption the fail-open
+# contract exists to prevent.
+@test "smudge fails open with HOME unset" {
+  local src="${BATS_TEST_TMPDIR}/scene.json"
+  absolute_scene >"$src"
+
+  bats_run env -u HOME "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" smudge <"$src"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(absolute_scene)" ]
+}
+
+# Fail-open is inverted for clean: replaying verbatim writes the absolute path
+# into the index, which is the one thing the filter exists to prevent, and an
+# exit 0 hides it from `required = true`.
+@test "clean fails loudly with HOME unset" {
+  local src="${BATS_TEST_TMPDIR}/scene.json"
+  absolute_scene >"$src"
+
+  bats_run env -u HOME "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" clean <"$src"
+  [ "$status" -ne 0 ]
+  ! grep -qF "$(obs_config_dir)" <<<"$output"
+}
+
+# A PATH without python3 is the realistic breakage; the passthrough branch it
+# takes is safe for smudge and a silent bad commit for clean.
+run_filter_without_python3() {
+  local stub="${BATS_TEST_TMPDIR}/nopy"
+  mkdir -p "$stub"
+  local tool
+  for tool in bash cat mktemp rm; do
+    ln -sf "$(command -v "$tool")" "$stub/$tool"
+  done
+  env PATH="$stub" "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" "$@"
+}
+
+@test "clean fails loudly when python3 is unavailable" {
+  local src="${BATS_TEST_TMPDIR}/scene.json"
+  absolute_scene >"$src"
+
+  bats_run run_filter_without_python3 clean <"$src"
+  [ "$status" -ne 0 ]
+  ! grep -qF "$(obs_config_dir)" <<<"$output"
+}
+
+@test "smudge still fails open when python3 is unavailable" {
+  local src="${BATS_TEST_TMPDIR}/scene.json"
+  absolute_scene >"$src"
+
+  bats_run run_filter_without_python3 smudge <"$src"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(absolute_scene)" ]
+}
+
+@test "setup_obs_filter registers clean, smudge and required in git config" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/obs"
+  git -C "$REPO_DIR" init -q
+  cp "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" "$REPO_DIR/obs/"
+  chmod +x "$REPO_DIR/obs/filter-mask-path.sh"
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$REPO_DIR" config --local filter.obsmaskpath.clean)" \
+    = "'$REPO_DIR/obs/filter-mask-path.sh' clean" ]
+  [ "$(git -C "$REPO_DIR" config --local filter.obsmaskpath.smudge)" \
+    = "'$REPO_DIR/obs/filter-mask-path.sh' smudge" ]
+  [ "$(git -C "$REPO_DIR" config --local filter.obsmaskpath.required)" = "true" ]
+}
+
+@test "setup_obs_filter fails when the filter script is missing" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/obs"
+  git -C "$REPO_DIR" init -q
+
+  bats_run setup_obs_filter
+  [ "$status" -ne 0 ]
+  [[ "$output" == skip:* ]]
+}
+
+# A fresh clone smudges with no filter registered, so the worktree holds the
+# literal placeholder and OBS cannot resolve the mask. Registering the filter
+# afterwards does not repair it on its own: git compares the cleaned worktree
+# against the index, they agree, and nothing re-smudges.
+seed_clone_without_filter() {
+  local origin="${BATS_TEST_TMPDIR}/origin" scene
+  scene="$origin/$OBS_SCENE_PATH"
+
+  mkdir -p "$(dirname "$scene")"
+  git -C "$origin" init -q
+  git -C "$origin" config user.email t@example.com
+  git -C "$origin" config user.name t
+  echo 'obs/*/basic/scenes/*.json filter=obsmaskpath' >"$origin/.gitattributes"
+  placeholder_scene >"$scene"
+  git -C "$origin" add -A
+  git -C "$origin" commit -qm scene
+
+  git clone -q "$origin" "$REPO_DIR"
+  mkdir -p "$REPO_DIR/obs"
+  cp "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" "$REPO_DIR/obs/"
+  chmod +x "$REPO_DIR/obs/filter-mask-path.sh"
+}
+
+@test "setup_obs_filter re-smudges a fresh clone's literal placeholder" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+  [ "$(count_occurrences '{{OBS_CONFIG_DIR}}' <"$REPO_DIR/$OBS_SCENE_PATH")" -eq 2 ]
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+
+  local worktree
+  worktree=$(cat "$REPO_DIR/$OBS_SCENE_PATH")
+  [ "$(count_occurrences "$(obs_config_dir)/basic/assets/image-mask.png" <<<"$worktree")" -eq 2 ]
+  ! grep -qF '{{OBS_CONFIG_DIR}}' <<<"$worktree"
+}
+
+@test "setup_obs_filter re-smudge is a no-op on a second run" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+
+  local first
+  first=$(cat "$REPO_DIR/$OBS_SCENE_PATH")
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$first" ]
+  [ -z "$(git -C "$REPO_DIR" status --porcelain "$OBS_SCENE_PATH")" ]
+}
+
+# The re-smudge must never be reachable as a way to lose an uncommitted scene
+# edit, so a file carrying real changes is left exactly as the user left it.
+@test "setup_obs_filter leaves a genuinely edited scene untouched" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+
+  local edited='{"a":"{{OBS_CONFIG_DIR}}/basic/assets/image-mask.png","user":"keep me"}'
+  printf '%s' "$edited" >"$REPO_DIR/$OBS_SCENE_PATH"
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$edited" ]
+  [[ "$output" == *"$OBS_SCENE_PATH"* ]]
+}
+
+# `required = true` aborts the checkout on a failing smudge, so unlinking the
+# file first turns a filter error into a deleted scene with nothing to restore.
+@test "a failing smudge leaves the scene file in place" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+
+  local before
+  before=$(cat "$REPO_DIR/$OBS_SCENE_PATH")
+  git -C "$REPO_DIR" config filter.obsmaskpath.smudge false
+  git -C "$REPO_DIR" config filter.obsmaskpath.required true
+
+  bats_run resmudge_obs_scenes
+  [ -f "$REPO_DIR/$OBS_SCENE_PATH" ]
+  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$before" ]
+}
+
+# git splits a filter command string on whitespace, so an unquoted script path
+# under a directory with a space resolves to a command that does not exist.
+@test "the registered filter survives a repo path containing a space" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/my repo"
+  mkdir -p "$REPO_DIR/obs/7680x2160/basic/scenes"
+  git -C "$REPO_DIR" init -q
+  git -C "$REPO_DIR" config user.email t@example.com
+  git -C "$REPO_DIR" config user.name t
+  echo 'obs/*/basic/scenes/*.json filter=obsmaskpath' >"$REPO_DIR/.gitattributes"
+  cp "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" "$REPO_DIR/obs/"
+  chmod +x "$REPO_DIR/obs/filter-mask-path.sh"
+  absolute_scene >"$REPO_DIR/$OBS_SCENE_PATH"
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+
+  bats_run git -C "$REPO_DIR" add -A
+  [ "$status" -eq 0 ]
+
+  local staged
+  staged=$(git -C "$REPO_DIR" show ":$OBS_SCENE_PATH")
+  [ "$(count_occurrences '{{OBS_CONFIG_DIR}}' <<<"$staged")" -eq 2 ]
+  ! grep -qF "$(obs_config_dir)" <<<"$staged"
+}
+
+@test "a re-smudge failure is reported as its own outcome, not as registration" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+  chmod -w "$REPO_DIR/obs/7680x2160/basic/scenes"
+
+  bats_run setup_obs_filter
+  chmod +w "$REPO_DIR/obs/7680x2160/basic/scenes"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"registered"* ]]
+  [[ "$output" == *"re-smudge"* ]]
+}
+
+@test "the obs filter is its own run step, right after the symlink" {
+  grep -q 'run "obs" setup_obs$' "${BATS_TEST_DIRNAME}/../setup.sh"
+  grep -q 'run "obs-filter" setup_obs_filter$' "${BATS_TEST_DIRNAME}/../setup.sh"
+}
+
+@test "the tracked mask is a real PNG committed inside the linked config dir" {
+  local mask="${BATS_TEST_DIRNAME}/../obs/7680x2160/basic/assets/image-mask.png"
+  [ -f "$mask" ]
+  file "$mask" | grep -q "PNG image data"
+  git -C "${BATS_TEST_DIRNAME}/.." ls-files --error-unmatch \
+    "obs/7680x2160/basic/assets/image-mask.png"
+}
+
+@test "the mask travels with the directory symlink, not a second link" {
+  ! grep -q 'setup_obs_assets' "${BATS_TEST_DIRNAME}/../setup.sh"
+  ! grep -q 'Settings/obs' "${BATS_TEST_DIRNAME}/../setup.sh"
+  [ ! -e "${BATS_TEST_DIRNAME}/../obs-assets" ]
+}
+
+@test "the in-place expansion approach leaves no trace in setup.sh" {
+  ! grep -q 'setup_obs_mask_path' "${BATS_TEST_DIRNAME}/../setup.sh"
+}
+
+@test "the mask lives outside a resolution-named decoy directory" {
   for d in "${BATS_TEST_DIRNAME}/../obs"/*/; do
     [[ "$(basename "$d")" =~ ^[0-9]+x[0-9]+$ ]]
   done
 }
 
-@test "obs asset linking is its own run step" {
-  grep -q 'run "obs-assets" setup_obs_assets$' "${BATS_TEST_DIRNAME}/../setup.sh"
-}
-
-@test "the tracked mask is a real PNG and is committed" {
-  local mask="${BATS_TEST_DIRNAME}/../obs-assets/image-mask.png"
-  [ -f "$mask" ]
-  file "$mask" | grep -q "PNG image data"
-  git -C "${BATS_TEST_DIRNAME}/.." ls-files --error-unmatch "obs-assets/image-mask.png"
-}
-
-@test "the scene's mask filters point at the linked mask, not another machine" {
-  local scene="${BATS_TEST_DIRNAME}/../obs/7680x2160/basic/scenes/Defautl_scene.json"
-  ! grep -q "j.armijofidalgo" "$scene"
-  [ "$(grep -cF "/Users/jm/Settings/obs/image-mask.png" "$scene")" -eq 2 ]
+@test "a stray re-smudge sidecar stays out of git" {
+  bats_run git -C "${BATS_TEST_DIRNAME}/.." check-ignore -q \
+    "obs/7680x2160/basic/scenes/Defautl_scene.json.resmudge.123"
+  [ "$status" -eq 0 ]
 }

@@ -8,3 +8,6 @@ obs/*/*
 !obs/*/user.ini
 !obs/*/basic/
 obs/*/basic/**/*.bak
+
+# Transient sidecar from setup.sh's scene re-smudge; only ever present mid-run.
+obs/*/basic/scenes/*.resmudge.*

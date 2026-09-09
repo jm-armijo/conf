@@ -324,10 +324,66 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
-# The mask is a FILE link, not a directory link: ~/Settings/obs also holds
-# stale hand-made copies of the scene and profile that this repo must not own.
-setup_obs_assets() {
-  link "$REPO_DIR/obs-assets/image-mask.png" "$HOME/Settings/obs/image-mask.png"
+# The scene file must hold an absolute image_path for OBS, but must never
+# commit one — a username baked into a tracked file breaks the next machine.
+# A clean/smudge filter keeps that invariant by construction; `required` makes
+# a missing filter a loud error instead of silently committing the real path.
+setup_obs_filter() {
+  local filter="$REPO_DIR/obs/filter-mask-path.sh"
+
+  [[ -x "$filter" ]] || {
+    echo "skip: no mask-path filter at $filter"
+    return 1
+  }
+  # git splits a filter command on whitespace, so a repo path with a space in
+  # it needs the script quoted inside the config value.
+  git -C "$REPO_DIR" config filter.obsmaskpath.clean "'$filter' clean" || return 1
+  git -C "$REPO_DIR" config filter.obsmaskpath.smudge "'$filter' smudge" || return 1
+  git -C "$REPO_DIR" config filter.obsmaskpath.required true || return 1
+  echo "obs: registered the mask-path clean/smudge filter"
+
+  resmudge_obs_scenes || {
+    echo "obs: filter registered, but the re-smudge failed"
+    return 1
+  }
+}
+
+# A clone runs its checkout before this filter is registered, so the worktree
+# holds the literal placeholder and git sees nothing to do — the cleaned
+# worktree already equals the index. Only an explicit re-checkout expands it.
+resmudge_obs_scenes() {
+  local filter="$REPO_DIR/obs/filter-mask-path.sh" path stash failed=0
+
+  while IFS= read -r -d '' path; do
+    [[ -n "$path" && -f "$REPO_DIR/$path" ]] || continue
+    grep -qF '{{OBS_CONFIG_DIR}}' "$REPO_DIR/$path" || continue
+
+    # Restoring from the index is lossless only where the worktree differs by
+    # nothing but the path form, which is exactly what cleaning it proves.
+    if ! cmp -s \
+      <("$filter" clean <"$REPO_DIR/$path") \
+      <(git -C "$REPO_DIR" show ":$path"); then
+      echo "obs: skipped re-smudge of $path (uncommitted local edits)"
+      continue
+    fi
+
+    # git skips a checkout whose content already matches the index, so the file
+    # must be out of the way for the smudge to run at all. Moved, never
+    # unlinked: `required = true` aborts the checkout on a failing smudge, and
+    # an unlinked file would be gone with nothing left to restore it from.
+    stash="$REPO_DIR/$path.resmudge.$$"
+    mv "$REPO_DIR/$path" "$stash" || {
+      failed=1
+      continue
+    }
+    if git -C "$REPO_DIR" checkout -- "$path"; then
+      rm -f "$stash"
+    else
+      mv "$stash" "$REPO_DIR/$path"
+      failed=1
+    fi
+  done < <(git -C "$REPO_DIR" ls-files -z ':(attr:filter=obsmaskpath)')
+  return "$failed"
 }
 
 # Per-file links, never a link of ~/.claude itself: Claude Code keeps its own
@@ -372,7 +428,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run "ghostty-reload" setup_ghostty_reload
   run "magnet" setup_magnet
   run "obs" setup_obs
-  run "obs-assets" setup_obs_assets
+  run "obs-filter" setup_obs_filter
   run "claude" setup_claude
   run "claude-skills" setup_claude_skills
   run "claude-vendor" setup_claude_vendor
