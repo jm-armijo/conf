@@ -959,12 +959,20 @@ claude_env() {
   local settings="${BATS_TEST_DIRNAME}/../claude/settings.json"
   # Renaming a script without editing settings.json leaves Claude Code silently
   # invoking nothing.
-  grep -qE '(~|/Users/[^"]*)/\.claude/scripts/statusline\.sh' "$settings"
-  grep -qE '(~|/Users/[^"]*)/\.claude/hooks/block-inefficient-bash\.sh' "$settings"
-  grep -qE '(~|/Users/[^"]*)/\.claude/hooks/plan-artifacts-on-exit\.sh' "$settings"
+  grep -q '~/\.claude/scripts/statusline\.sh' "$settings"
+  grep -q '~/\.claude/hooks/block-inefficient-bash\.sh' "$settings"
+  grep -q '~/\.claude/hooks/plan-artifacts-on-exit\.sh' "$settings"
   [ -x "${BATS_TEST_DIRNAME}/../claude/scripts/statusline.sh" ]
   [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/block-inefficient-bash.sh" ]
   [ -x "${BATS_TEST_DIRNAME}/../claude/hooks/plan-artifacts-on-exit.sh" ]
+}
+
+@test "claude settings.json hardcodes no username in its script paths" {
+  local settings="${BATS_TEST_DIRNAME}/../claude/settings.json"
+  # A hardcoded username works on exactly one machine and fails silently there
+  # after - no warning, no statusline.
+  bats_run grep -q '/Users/' "$settings"
+  [ "$status" -ne 0 ]
 }
 
 plan_hook() {
