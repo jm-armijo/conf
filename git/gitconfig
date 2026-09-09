@@ -24,8 +24,8 @@
 [core]
 	editor = vim
 	excludesfile = /Users/j.armijofidalgo/.gitignore_global
-[url "ssh://git@github.com/"]
-	insteadOf = https://github.com/
+[includeIf "gitdir:~/code/personal/"]
+	path = ~/code/personal/.gitconfig-personal
 [difftool "sourcetree"]
 	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
 	path = 
