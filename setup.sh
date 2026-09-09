@@ -47,6 +47,73 @@ link() {
   echo "link: $dest -> $src"
 }
 
+backup_partial_omz() {
+  local zsh_dir="$1"
+  [[ -d "$zsh_dir" ]] || return 0
+
+  local backup
+  backup="${zsh_dir}.backup.$(date +%Y%m%d%H%M%S)"
+  mv "$zsh_dir" "$backup" || {
+    echo "error: could not back up $zsh_dir"
+    return 1
+  }
+  echo "back: moved existing $zsh_dir -> $backup" >&2
+  echo "$backup"
+}
+
+restore_omz_backup() {
+  local backup="$1" zsh_dir="$2"
+  [[ -n "$backup" && -d "$backup" ]] || return 0
+
+  mv "$backup" "$zsh_dir" || {
+    echo "error: could not move $backup back to $zsh_dir"
+    return 1
+  }
+  echo "back: restored $zsh_dir from $backup"
+}
+
+# Copies only the files the destination lacks, so the fresh install's own files
+# win any collision and no copy is ever skipped — BSD cp -n exits 1 on a skip,
+# which is indistinguishable from a genuine failure.
+copy_missing_files() {
+  local src="$1" dest="$2"
+
+  local entry rel
+  while IFS= read -r entry; do
+    rel="${entry#"$src"}"
+    rel="${rel#/}"
+    [[ -z "$rel" || -e "$dest/$rel" ]] && continue
+    if [[ -d "$entry" && ! -L "$entry" ]]; then
+      mkdir -p "$dest/$rel" || return 1
+      continue
+    fi
+    mkdir -p "$(dirname "$dest/$rel")" || return 1
+    cp -R "$entry" "$dest/$rel" || return 1
+  done < <(find "$src")
+}
+
+restore_omz_content() {
+  local backup="$1" zsh_dir="$2" zsh_custom="$3"
+  [[ -n "$backup" && -d "$backup" ]] || return 0
+
+  mkdir -p "$zsh_dir" || return 1
+  copy_missing_files "$backup" "$zsh_dir" || {
+    echo "error: could not restore content from $backup"
+    return 1
+  }
+
+  # ZSH_CUSTOM may point outside $zsh_dir, which the copy above cannot reach.
+  if [[ -d "$backup/custom" && "$zsh_custom" != "$zsh_dir/custom" ]]; then
+    mkdir -p "$zsh_custom" || return 1
+    copy_missing_files "$backup/custom" "$zsh_custom" || {
+      echo "error: could not restore custom/ from $backup"
+      return 1
+    }
+  fi
+
+  echo "back: restored previous content from $backup"
+}
+
 setup_omz() {
   local zsh_dir="${ZSH:-$HOME/.oh-my-zsh}"
   local zsh_custom="${ZSH_CUSTOM:-$zsh_dir/custom}"
@@ -56,7 +123,9 @@ setup_omz() {
     return 1
   fi
 
-  if [[ -d "$zsh_dir" ]]; then
+  # Not -d "$zsh_dir": setup_zsh's theme link makes link() mkdir -p the directory,
+  # so a bare directory test reports "installed" forever and never installs.
+  if [[ -f "$zsh_dir/oh-my-zsh.sh" ]]; then
     echo "ok:   oh-my-zsh already installed"
   else
     local installer
@@ -66,9 +135,18 @@ setup_omz() {
       return 1
     fi
 
+    # Upstream's installer aborts on an existing $ZSH; move the partial one aside.
+    local backup
+    backup="$(backup_partial_omz "$zsh_dir")" || return 1
+
     # ~/.zshrc is already, or is about to become, a symlink into this repo.
     # KEEP_ZSHRC stops the installer moving it aside and writing its own template.
-    KEEP_ZSHRC=yes sh -c "$installer" "" --unattended || return 1
+    if ! KEEP_ZSHRC=yes sh -c "$installer" "" --unattended; then
+      echo "error: oh-my-zsh install failed — previous $zsh_dir restored"
+      restore_omz_backup "$backup" "$zsh_dir"
+      return 1
+    fi
+    restore_omz_content "$backup" "$zsh_dir" "$zsh_custom" || return 1
   fi
 
   local plugins=("${OMZ_PLUGINS[@]:-zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git}")

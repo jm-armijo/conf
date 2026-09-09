@@ -240,8 +240,24 @@ stub_omz_sh() {
   echo "$*"
   echo "KEEP_ZSHRC=${KEEP_ZSHRC:-}"
 } >>"$INSTALL_LOG"
-mkdir -p "$ZSH"
+if [ -d "$ZSH" ]; then
+  echo "The \$ZSH folder already exists ($ZSH)." >&2
+  exit 1
+fi
+mkdir -p "$ZSH/custom/plugins"
+mkdir -p "$ZSH/themes"
+touch "$ZSH/custom/example.zsh"
+touch "$ZSH/themes/agnoster.zsh-theme"
+touch "$ZSH/oh-my-zsh.sh"
 exit 0
+STUB
+  chmod +x "$STUB_BIN/sh"
+}
+
+stub_omz_sh_fail() {
+  cat >"$STUB_BIN/sh" <<'STUB'
+#!/bin/bash
+exit 1
 STUB
   chmod +x "$STUB_BIN/sh"
 }
@@ -277,11 +293,102 @@ STUB
   stub_omz_sh
   stub_omz_curl
   mkdir -p "$ZSH"
+  touch "$ZSH/oh-my-zsh.sh"
 
   bats_run setup_omz
   [ "$status" -eq 0 ]
   [ ! -e "$INSTALL_LOG" ]
   [[ "$output" == ok:* ]]
+}
+
+@test "setup_omz installs when ~/.oh-my-zsh exists but holds no install" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  # link()'s mkdir -p creates this decoy when the agnoster theme is linked
+  # before the real install; a directory-existence guard skips forever.
+  mkdir -p "$ZSH/themes"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [ -e "$INSTALL_LOG" ]
+  [ -f "$ZSH/oh-my-zsh.sh" ]
+  local backup
+  backup="$(compgen -G "$ZSH.backup.*" | head -1)"
+  [ -n "$backup" ]
+  [ -d "$backup/themes" ]
+}
+
+@test "setup_omz leaves a complete install untouched" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  mkdir -p "$ZSH"
+  touch "$ZSH/oh-my-zsh.sh"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [ ! -e "$INSTALL_LOG" ]
+  [ -z "$(compgen -G "$ZSH.backup.*")" ]
+}
+
+@test "setup_omz restores custom plugins after reinstalling over a partial install" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  mkdir -p "$ZSH_CUSTOM/plugins/hand-written"
+  echo "# mine" >"$ZSH_CUSTOM/plugins/hand-written/hand-written.plugin.zsh"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [ -f "$ZSH_CUSTOM/plugins/hand-written/hand-written.plugin.zsh" ]
+}
+
+@test "setup_omz restores the backup when the installer fails" {
+  omz_env
+  stub_omz_git
+  stub_omz_curl
+  stub_omz_sh_fail
+  mkdir -p "$ZSH/themes"
+  echo "# mine" >"$ZSH/themes/mine.zsh-theme"
+
+  bats_run setup_omz
+  [ "$status" -ne 0 ]
+  [ -f "$ZSH/themes/mine.zsh-theme" ]
+  [ -z "$(compgen -G "$ZSH.backup.*")" ]
+}
+
+@test "setup_omz restores a hand-added theme after reinstalling over a partial install" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  mkdir -p "$ZSH/themes"
+  echo "# mine" >"$ZSH/themes/mine.zsh-theme"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [ -f "$ZSH/themes/mine.zsh-theme" ]
+}
+
+@test "setup_omz succeeds when restored content collides with the fresh install" {
+  omz_env
+  stub_omz_git
+  stub_omz_sh
+  stub_omz_curl
+  mkdir -p "$ZSH/themes"
+  echo "# stale" >"$ZSH/themes/agnoster.zsh-theme"
+  echo "# mine" >"$ZSH/themes/mine.zsh-theme"
+
+  bats_run setup_omz
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"could not restore"* ]]
+  [ -f "$ZSH/themes/mine.zsh-theme" ]
+  bats_run grep -q 'stale' "$ZSH/themes/agnoster.zsh-theme"
+  [ "$status" -ne 0 ]
 }
 
 @test "setup_omz runs the upstream installer when oh-my-zsh is absent" {
@@ -294,7 +401,7 @@ STUB
   bats_run setup_omz
   [ "$status" -eq 0 ]
   [ -e "$INSTALL_LOG" ]
-  [ -d "$ZSH" ]
+  [ -f "$ZSH/oh-my-zsh.sh" ]
 }
 
 @test "setup_omz passes KEEP_ZSHRC=yes and --unattended to the installer" {
@@ -910,13 +1017,19 @@ plan_hook() {
 @test "zshrc initialises starship after sourcing oh-my-zsh" {
   local zshrc="${BATS_TEST_DIRNAME}/../zsh/zshrc"
   local omz init
-  omz="$(grep -n '^source \$ZSH/oh-my-zsh\.sh' "$zshrc" | cut -d: -f1)"
+  omz="$(grep -n '^\[\[ -f \$ZSH/oh-my-zsh\.sh \]\] && source \$ZSH/oh-my-zsh\.sh' "$zshrc" | cut -d: -f1)"
   init="$(grep -n 'starship init zsh' "$zshrc" | cut -d: -f1)"
   [ -n "$omz" ]
   [ -n "$init" ]
   # Sourcing oh-my-zsh assigns $PROMPT, so an init above it is silently overwritten.
   [ "$init" -gt "$omz" ]
   grep -q 'command -v starship' "$zshrc"
+}
+
+@test "zshrc guards sourcing oh-my-zsh on the install existing" {
+  local zshrc="${BATS_TEST_DIRNAME}/../zsh/zshrc"
+  # A missing or half-installed oh-my-zsh must degrade, not break every shell.
+  grep -q '\[\[ -f \$ZSH/oh-my-zsh\.sh \]\] && source \$ZSH/oh-my-zsh\.sh' "$zshrc"
 }
 
 @test "zshrc selects no oh-my-zsh theme and no longer sources spaceship" {

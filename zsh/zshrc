@@ -76,7 +76,7 @@ DISABLE_AUTO_TITLE="true"
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(git zsh-syntax-highlighting)
 
-source $ZSH/oh-my-zsh.sh
+[[ -f $ZSH/oh-my-zsh.sh ]] && source $ZSH/oh-my-zsh.sh
 
 # Starship prompt. This MUST stay below `source $ZSH/oh-my-zsh.sh`: that line is
 # where oh-my-zsh installs its own $PROMPT, so initialising Starship before it
