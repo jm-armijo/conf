@@ -163,8 +163,33 @@ setup_omz() {
   return "$status"
 }
 
+# A real file, not a symlink: apps like Docker Desktop append machine-specific
+# lines to ~/.zshrc, which a symlink would write straight into this repo.
+install_local_zshrc() {
+  local dest="$HOME/.zshrc"
+  local line="source \"$REPO_DIR/zsh/zshrc\""
+
+  if [[ -L "$dest" ]]; then
+    local backup
+    backup="${dest}.backup.$(date +%Y%m%d%H%M%S)"
+    mv "$dest" "$backup" || {
+      echo "error: could not back up $dest"
+      return 1
+    }
+    echo "back: moved existing $dest -> $backup"
+  fi
+
+  if [[ -f "$dest" ]] && grep -qxF "$line" "$dest"; then
+    echo "ok:   $dest already sources the repo"
+    return 0
+  fi
+
+  printf '%s\n' "$line" >>"$dest" || return 1
+  echo "src:  $dest sources $REPO_DIR/zsh/zshrc"
+}
+
 setup_zsh() {
-  link "$REPO_DIR/zsh/zshrc" "$HOME/.zshrc" || return 1
+  install_local_zshrc || return 1
   link "$REPO_DIR/zsh/agnoster.zsh-theme" "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme" || return 1
 }
 
