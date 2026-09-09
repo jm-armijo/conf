@@ -70,6 +70,34 @@ Colours are the **basic-8 terminal names** (`blue`, `green`, `yellow`, `black`, 
 The git segment is two modules: `[git_branch]` is the green pill that is always there,
 and `[git_status]` a yellow one that appears beside it only when the tree is dirty.
 
+## Git identity
+
+`git/gitconfig`'s `[user]` block hardcodes the **corporate** name and email, so that
+is the identity every repo gets by default. An `includeIf "gitdir:~/code/personal/"`
+overrides it for anything under `~/code/personal/`, pulling in a personal name, email
+and SSH key from `~/code/personal/.gitconfig-personal`.
+
+That included file is **deliberately not tracked here** — it holds a personal email
+and a private key path. It is a manual per-machine step: on a fresh machine, create it
+by hand, or commits in personal repos are silently authored with the corporate
+address.
+
+```ini
+[user]
+    name = Your Name
+    email = you@personal.example
+[core]
+    sshCommand = "ssh -i ~/.ssh/<your-personal-key> -o IdentitiesOnly=yes"
+```
+
+`git` only reads an `includeIf` path that exists, so a missing file is not an error —
+which is exactly why its absence goes unnoticed.
+
+**One behaviour was removed with this:** `url."ssh://git@github.com/".insteadOf`,
+which applied *globally* and silently rewrote every `https://github.com/` clone to
+SSH. That no longer happens anywhere, so an `https://` clone now really does use
+HTTPS auth.
+
 ## Claude Code
 
 `~/.claude` holds both files you write and state Claude Code writes for itself
