@@ -1,7 +1,7 @@
 {
     "name": "Defautl scene",
     "AuxAudioDevice1": {
-        "prev_ver": 536936450,
+        "prev_ver": 537001986,
         "name": "Mic/Aux",
         "uuid": "10e60045-3111-47e5-8cb6-7689c35b6e90",
         "id": "coreaudio_input_capture",
@@ -33,7 +33,7 @@
     },
     "sources": [
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Rode Mic",
             "uuid": "7448c3c2-5a96-4fab-822d-e1c21257ba4a",
             "id": "coreaudio_input_capture",
@@ -67,7 +67,7 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Camera Bottom Right",
             "uuid": "ee9b4327-226d-4b18-bc34-50f3c86a704c",
             "id": "macos-avcapture",
@@ -102,7 +102,7 @@
             "private_settings": {},
             "filters": [
                 {
-                    "prev_ver": 536936450,
+                    "prev_ver": 537001986,
                     "name": "Image Mask/Blend",
                     "uuid": "ed9f7025-1a3b-426c-b7e6-94ab9b60d4f2",
                     "id": "mask_filter",
@@ -131,7 +131,7 @@
             ]
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "macOS Audio Capture",
             "uuid": "73665570-4f43-40ab-9ff7-fab8f84a5e17",
             "id": "sck_audio_capture",
@@ -160,7 +160,7 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "WebCam",
             "uuid": "1eeaff66-fafe-4e7f-a938-97d666006159",
             "id": "macos-avcapture",
@@ -193,13 +193,13 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Left Screen",
             "uuid": "95b7ac86-a69b-4b65-9a0a-2a00c9cb0b06",
             "id": "screen_capture",
             "versioned_id": "screen_capture",
             "settings": {
-                "display_uuid": "3CFFBA80-ABFB-42F7-B575-1B3A8419B173",
+                "display_uuid": "E9B2587C-F101-4B43-940E-3D6775BC42AC",
                 "type": 0,
                 "show_cursor": true,
                 "hide_obs": true
@@ -227,13 +227,13 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Middle Screen",
             "uuid": "3389eb41-f93f-4695-8fff-4bd814cbdfd5",
             "id": "screen_capture",
             "versioned_id": "screen_capture",
             "settings": {
-                "display_uuid": "3CFFBA80-ABFB-42F7-B575-1B3A8419B173",
+                "display_uuid": "E9B2587C-F101-4B43-940E-3D6775BC42AC",
                 "hide_obs": true
             },
             "mixers": 255,
@@ -259,13 +259,13 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Right Screen",
             "uuid": "78c74e1c-3db7-487e-af18-0c3bec775203",
             "id": "screen_capture",
             "versioned_id": "screen_capture",
             "settings": {
-                "display_uuid": "3CFFBA80-ABFB-42F7-B575-1B3A8419B173",
+                "display_uuid": "E9B2587C-F101-4B43-940E-3D6775BC42AC",
                 "hide_obs": true
             },
             "mixers": 255,
@@ -291,7 +291,7 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Camera Bottom Left",
             "uuid": "c210941f-53c0-4d92-93cc-4a4cbde51375",
             "id": "macos-avcapture",
@@ -323,7 +323,7 @@
             "private_settings": {},
             "filters": [
                 {
-                    "prev_ver": 536936450,
+                    "prev_ver": 537001986,
                     "name": "Image Mask/Blend",
                     "uuid": "715eeb15-e6b0-4c63-8491-cb1fb16b0598",
                     "id": "mask_filter",
@@ -351,7 +351,7 @@
             ]
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Laptop",
             "uuid": "32483b9e-f29c-4bd3-a52d-f7e637c67914",
             "id": "screen_capture",
@@ -384,7 +384,7 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Camera only",
             "uuid": "9bd49cca-a043-4dda-bdf6-8b47b858a4cd",
             "id": "scene",
@@ -530,7 +530,7 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Screen & Camera",
             "uuid": "c0e41fe0-9008-4c93-ab0f-cad79742e1a1",
             "id": "scene",
@@ -961,7 +961,7 @@
             "private_settings": {}
         },
         {
-            "prev_ver": 536936450,
+            "prev_ver": 537001986,
             "name": "Screen Only",
             "uuid": "8483e6d5-c8e2-4997-b374-10c57d2eb2c5",
             "id": "scene",
