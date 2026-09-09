@@ -7,3 +7,4 @@ obs/*/*
 !obs/*/global.ini
 !obs/*/user.ini
 !obs/*/basic/
+obs/*/basic/**/*.bak
