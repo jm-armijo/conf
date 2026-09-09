@@ -324,6 +324,12 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
+# The mask is a FILE link, not a directory link: ~/Settings/obs also holds
+# stale hand-made copies of the scene and profile that this repo must not own.
+setup_obs_assets() {
+  link "$REPO_DIR/obs-assets/image-mask.png" "$HOME/Settings/obs/image-mask.png"
+}
+
 # Per-file links, never a link of ~/.claude itself: Claude Code keeps its own
 # runtime state there.
 setup_claude() {
@@ -366,6 +372,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run "ghostty-reload" setup_ghostty_reload
   run "magnet" setup_magnet
   run "obs" setup_obs
+  run "obs-assets" setup_obs_assets
   run "claude" setup_claude
   run "claude-skills" setup_claude_skills
   run "claude-vendor" setup_claude_vendor

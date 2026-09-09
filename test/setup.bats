@@ -2516,3 +2516,54 @@ STUB
   grep -q 'run "ghostty" setup_ghostty$' "${BATS_TEST_DIRNAME}/../setup.sh"
   grep -q 'run "ghostty-reload" setup_ghostty_reload$' "${BATS_TEST_DIRNAME}/../setup.sh"
 }
+
+@test "setup_obs_assets links the tracked mask into ~/Settings/obs" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  HOME="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "$REPO_DIR/obs-assets"
+  touch "$REPO_DIR/obs-assets/image-mask.png"
+
+  bats_run setup_obs_assets
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/Settings/obs/image-mask.png" ]
+  [ "$(readlink "$HOME/Settings/obs/image-mask.png")" = "$REPO_DIR/obs-assets/image-mask.png" ]
+}
+
+@test "setup_obs_assets links the file, never the ~/Settings/obs directory" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  HOME="${BATS_TEST_TMPDIR}/home"
+  mkdir -p "$REPO_DIR/obs-assets"
+  touch "$REPO_DIR/obs-assets/image-mask.png"
+  mkdir -p "$HOME/Settings/obs"
+  touch "$HOME/Settings/obs/Default_scene.json"
+
+  bats_run setup_obs_assets
+  [ "$status" -eq 0 ]
+  [ ! -L "$HOME/Settings/obs" ]
+  [ -f "$HOME/Settings/obs/Default_scene.json" ]
+  [ ! -L "$HOME/Settings/obs/Default_scene.json" ]
+}
+
+@test "the mask lives outside obs/, so it is not offered as a resolution" {
+  [ ! -e "${BATS_TEST_DIRNAME}/../obs/obs-assets" ]
+  for d in "${BATS_TEST_DIRNAME}/../obs"/*/; do
+    [[ "$(basename "$d")" =~ ^[0-9]+x[0-9]+$ ]]
+  done
+}
+
+@test "obs asset linking is its own run step" {
+  grep -q 'run "obs-assets" setup_obs_assets$' "${BATS_TEST_DIRNAME}/../setup.sh"
+}
+
+@test "the tracked mask is a real PNG and is committed" {
+  local mask="${BATS_TEST_DIRNAME}/../obs-assets/image-mask.png"
+  [ -f "$mask" ]
+  file "$mask" | grep -q "PNG image data"
+  git -C "${BATS_TEST_DIRNAME}/.." ls-files --error-unmatch "obs-assets/image-mask.png"
+}
+
+@test "the scene's mask filters point at the linked mask, not another machine" {
+  local scene="${BATS_TEST_DIRNAME}/../obs/7680x2160/basic/scenes/Defautl_scene.json"
+  ! grep -q "j.armijofidalgo" "$scene"
+  [ "$(grep -cF "/Users/jm/Settings/obs/image-mask.png" "$scene")" -eq 2 ]
+}
