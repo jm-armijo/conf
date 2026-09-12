@@ -59,7 +59,16 @@
     "jdtls-lsp@claude-plugins-official": true,
     "swift-lsp@claude-plugins-official": true,
     "lua-lsp@claude-plugins-official": true,
-    "ruby-lsp@claude-plugins-official": true
+    "ruby-lsp@claude-plugins-official": true,
+    "superwhisper@superwhisper": true
+  },
+  "extraKnownMarketplaces": {
+    "superwhisper": {
+      "source": {
+        "source": "github",
+        "repo": "superultrainc/superwhisper-claude-code"
+      }
+    }
   },
   "alwaysThinkingEnabled": false,
   "autoCompactWindow": 200000,
