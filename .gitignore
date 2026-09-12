@@ -11,3 +11,7 @@ obs/*/basic/**/*.bak
 
 # Transient sidecar from setup.sh's scene re-smudge; only ever present mid-run.
 obs/*/basic/scenes/*.resmudge.*
+
+# Kept, not transient: the re-smudge backs a clobbered config up here rather
+# than destroying it, and those bytes are exactly the ones holding a username.
+obs/*/basic/**/*.backup.*

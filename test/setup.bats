@@ -2538,6 +2538,10 @@ absolute_scene() {
     "$(obs_config_dir)" "$(obs_config_dir)"
 }
 
+scene_backups() {
+  find "$(dirname "$REPO_DIR/$OBS_SCENE_PATH")" -name '*.backup.*' 2>/dev/null
+}
+
 placeholder_scene() {
   printf '{"a":"%s/basic/assets/image-mask.png","b":"%s/basic/assets/image-mask.png"}' \
     '{{OBS_CONFIG_DIR}}' '{{OBS_CONFIG_DIR}}'
@@ -2912,8 +2916,9 @@ seed_clone_without_filter() {
 }
 
 # The re-smudge must never be reachable as a way to lose an uncommitted scene
-# edit, so a file carrying real changes is left exactly as the user left it.
-@test "setup_obs_filter leaves a genuinely edited scene untouched" {
+# edit. OBS's clobber and a hand edit are indistinguishable from the content
+# alone, so neither is destroyed: the file is repaired, the old bytes kept.
+@test "setup_obs_filter backs up a genuinely edited scene before repairing it" {
   REPO_DIR="${BATS_TEST_TMPDIR}/repo"
   seed_clone_without_filter
 
@@ -2922,8 +2927,80 @@ seed_clone_without_filter() {
 
   bats_run setup_obs_filter
   [ "$status" -eq 0 ]
-  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$edited" ]
+
+  local backup
+  backup=$(scene_backups)
+  [ -f "$backup" ]
+  [ "$(cat "$backup")" = "$edited" ]
+  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$(absolute_scene)" ]
   [[ "$output" == *"$OBS_SCENE_PATH"* ]]
+}
+
+# OBS resolves a literal "{{HOME}}/Movies" to nothing, then writes its own
+# absolute path back over the file on quit. The placeholder is gone, so the
+# cleaned worktree no longer matches the index and the lossless restore refuses
+# — leaving the file stuck with another machine's username.
+@test "setup_obs_filter repairs an OBS-clobbered scene, keeping the old bytes" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+
+  local clobbered='{"a":"/Users/freshuser/obs/image-mask.png","b":"/Users/freshuser/Movies"}'
+  printf '%s' "$clobbered" >"$REPO_DIR/$OBS_SCENE_PATH"
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$(absolute_scene)" ]
+
+  local backup
+  backup=$(scene_backups)
+  [ -f "$backup" ]
+  [[ "$(basename "$backup")" == *".backup."* ]]
+  [ "$(cat "$backup")" = "$clobbered" ]
+  [[ "$output" == *"$backup"* ]]
+}
+
+# A fresh clone is not damage: nothing of the user's is being replaced, so the
+# repair must not litter the repo with a backup of a placeholder.
+@test "re-smudging a fresh clone's placeholder creates no backup" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+  [ "$(count_occurrences "$(obs_config_dir)/basic/assets/image-mask.png" \
+    <"$REPO_DIR/$OBS_SCENE_PATH")" -eq 2 ]
+  [ -z "$(scene_backups)" ]
+}
+
+# The ordinary re-run. An already-correct worktree is the expected state, not
+# damage, so it must not be backed up, restored, or reported.
+@test "a re-run on an already-correct worktree neither backs up nor restores" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  seed_clone_without_filter
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+
+  local first
+  first=$(cat "$REPO_DIR/$OBS_SCENE_PATH")
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$first" ]
+  [ -z "$(scene_backups)" ]
+  [[ "$output" != *"$OBS_SCENE_PATH"* ]]
+}
+
+# The backups land under obs/*/basic/, which is partly tracked, so an unignored
+# name would show up in `git add -A` and carry a username into a commit.
+@test "a re-smudge backup stays out of git" {
+  local tracked
+  while IFS= read -r tracked; do
+    bats_run git -C "${BATS_TEST_DIRNAME}/.." check-ignore -q \
+      "$tracked.backup.20260912120000"
+    [ "$status" -eq 0 ]
+  done < <(git -C "${BATS_TEST_DIRNAME}/.." ls-files \
+    ':(attr:filter=obsmaskpath)')
 }
 
 # `required = true` aborts the checkout on a failing smudge, so unlinking the

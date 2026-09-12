@@ -18,6 +18,10 @@ run() {
   return 0
 }
 
+backup_path_for() {
+  echo "$1.backup.$(date +%Y%m%d%H%M%S)"
+}
+
 link() {
   local src="$1" dest="$2"
 
@@ -34,7 +38,7 @@ link() {
   if [[ -e "$dest" || -L "$dest" ]]; then
     # Split from the assignment: `local x=$(...)` masks the command's exit status.
     local backup
-    backup="${dest}.backup.$(date +%Y%m%d%H%M%S)"
+    backup="$(backup_path_for "$dest")"
     mv "$dest" "$backup" || {
       echo "error: could not back up $dest"
       return 1
@@ -352,39 +356,68 @@ setup_obs_filter() {
 # A clone runs its checkout before this filter is registered, so the worktree
 # holds the literal placeholder and git sees nothing to do — the cleaned
 # worktree already equals the index. Only an explicit re-checkout expands it.
+#
+# Worse, OBS opened in that window reads the literal "{{HOME}}/Movies", fails to
+# resolve it, and writes its own absolute path back on quit. That erases the
+# placeholder, so the cleaned worktree no longer matches the index and the
+# lossless test below refuses — the file would stay stuck holding a username
+# from whichever machine cloned it. Such a clobber is byte-indistinguishable
+# from a deliberate hand edit, so neither is destroyed: both are backed up.
 resmudge_obs_configs() {
-  local filter="$REPO_DIR/obs/filter-mask-path.sh" path stash failed=0
+  local path failed=0
 
   while IFS= read -r -d '' path; do
     [[ -n "$path" && -f "$REPO_DIR/$path" ]] || continue
-    grep -qE '\{\{(OBS_CONFIG_DIR|HOME)\}\}' "$REPO_DIR/$path" || continue
-
-    # Restoring from the index is lossless only where the worktree differs by
-    # nothing but the path form, which is exactly what cleaning it proves.
-    if ! cmp -s \
-      <("$filter" clean <"$REPO_DIR/$path") \
-      <(git -C "$REPO_DIR" show ":$path"); then
-      echo "obs: skipped re-smudge of $path (uncommitted local edits)"
-      continue
-    fi
-
-    # git skips a checkout whose content already matches the index, so the file
-    # must be out of the way for the smudge to run at all. Moved, never
-    # unlinked: `required = true` aborts the checkout on a failing smudge, and
-    # an unlinked file would be gone with nothing left to restore it from.
-    stash="$REPO_DIR/$path.resmudge.$$"
-    mv "$REPO_DIR/$path" "$stash" || {
-      failed=1
-      continue
-    }
-    if git -C "$REPO_DIR" checkout -- "$path"; then
-      rm -f "$stash"
-    else
-      mv "$stash" "$REPO_DIR/$path"
-      failed=1
-    fi
+    repair_obs_config "$path" || failed=1
   done < <(git -C "$REPO_DIR" ls-files -z ':(attr:filter=obsmaskpath)')
   return "$failed"
+}
+
+repair_obs_config() {
+  local path="$1" filter="$REPO_DIR/obs/filter-mask-path.sh" backup
+
+  # The discriminator, and the reason no heuristic on the content is needed:
+  # what the smudge would produce from the index is computable, so "already
+  # correct" is an exact comparison rather than a guess. This is the ordinary
+  # re-run, and it must stay silent — a re-run is not damage.
+  if cmp -s \
+    <(git -C "$REPO_DIR" show ":$path" | "$filter" smudge) \
+    "$REPO_DIR/$path"; then
+    return 0
+  fi
+
+  # Restoring from the index is lossless only where the worktree differs by
+  # nothing but the path form, which is exactly what cleaning it proves. The
+  # fresh clone's literal placeholder lands here: it cleans to the index blob
+  # untouched, so nothing of value is being replaced and no backup is kept.
+  if ! cmp -s \
+    <("$filter" clean <"$REPO_DIR/$path") \
+    <(git -C "$REPO_DIR" show ":$path"); then
+    backup="$(backup_path_for "$REPO_DIR/$path")"
+    cp "$REPO_DIR/$path" "$backup" || {
+      echo "obs: could not back up $path, leaving it untouched"
+      return 1
+    }
+    echo "back: $path held unrecognised content -> $backup"
+  fi
+
+  restore_smudged_obs_config "$path"
+}
+
+# git skips a checkout whose content already matches the index, so the file must
+# be out of the way for the smudge to run at all. Moved, never unlinked:
+# `required = true` aborts the checkout on a failing smudge, and an unlinked
+# file would be gone with nothing left to restore it from.
+restore_smudged_obs_config() {
+  local path="$1" stash="$REPO_DIR/$1.resmudge.$$"
+
+  mv "$REPO_DIR/$path" "$stash" || return 1
+  if git -C "$REPO_DIR" checkout -- "$path"; then
+    rm -f "$stash"
+    return 0
+  fi
+  mv "$stash" "$REPO_DIR/$path"
+  return 1
 }
 
 # Per-file links, never a link of ~/.claude itself: Claude Code keeps its own
