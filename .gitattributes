@@ -1,1 +1,4 @@
 obs/*/basic/scenes/*.json filter=obsmaskpath
+obs/*/global.ini filter=obsmaskpath
+obs/*/user.ini filter=obsmaskpath
+obs/*/basic/profiles/*/basic.ini filter=obsmaskpath

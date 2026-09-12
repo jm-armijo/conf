@@ -2557,6 +2557,111 @@ placeholder_scene() {
     "${BATS_TEST_DIRNAME}/../.gitattributes"
 }
 
+OBS_INI_PATHS=(
+  "obs/7680x2160/global.ini"
+  "obs/7680x2160/user.ini"
+  "obs/7680x2160/basic/profiles/Default/basic.ini"
+)
+
+OBS_BASIC_INI_PATH="obs/7680x2160/basic/profiles/Default/basic.ini"
+
+# The ini files hold paths outside the obs config dir — Movies, Documents — so
+# {{OBS_CONFIG_DIR}} alone cannot mask them; they need the generic {{HOME}}.
+@test "the ini files stored in the index hold no home path" {
+  local path staged
+  for path in "${OBS_INI_PATHS[@]}"; do
+    staged=$(git -C "${BATS_TEST_DIRNAME}/.." show ":$path")
+    [ "$(count_occurrences '/Users/' <<<"$staged")" -eq 0 ]
+  done
+}
+
+@test "gitattributes routes every obs ini through the obsmaskpath filter" {
+  local path attr
+  for path in "${OBS_INI_PATHS[@]}"; do
+    attr=$(git -C "${BATS_TEST_DIRNAME}/.." check-attr filter -- "$path")
+    [[ "$attr" == *": filter: obsmaskpath" ]]
+  done
+}
+
+# A required filter turns a missing python3 into an aborted commit, so the
+# tracked PNG must stay off the filter path entirely.
+@test "gitattributes leaves the binary mask off the filter" {
+  local attr
+  attr=$(git -C "${BATS_TEST_DIRNAME}/.." check-attr filter -- \
+    "obs/7680x2160/basic/assets/image-mask.png")
+  [[ "$attr" != *": filter: obsmaskpath" ]]
+}
+
+absolute_ini() {
+  printf 'FilePath=%s/Movies\nDock=file://%s/Documents/teleprompter.txt\n' \
+    "$HOME" "$HOME"
+}
+
+placeholder_ini() {
+  printf 'FilePath=%s/Movies\nDock=file://%s/Documents/teleprompter.txt\n' \
+    '{{HOME}}' '{{HOME}}'
+}
+
+@test "clean rewrites a bare home path to the HOME placeholder" {
+  local cleaned
+  cleaned=$(absolute_ini | mask_filter clean)
+  [ "$(count_occurrences '{{HOME}}' <<<"$cleaned")" -eq 2 ]
+  [ "$(count_occurrences '/Users/' <<<"$cleaned")" -eq 0 ]
+}
+
+@test "smudge rewrites the HOME placeholder back to the absolute home path" {
+  local smudged
+  smudged=$(placeholder_ini | mask_filter smudge)
+  [ "$(count_occurrences "$HOME/Movies" <<<"$smudged")" -eq 1 ]
+  [ "$(count_occurrences '{{HOME}}' <<<"$smudged")" -eq 0 ]
+}
+
+@test "clean of smudge round-trips the HOME placeholder unchanged" {
+  local original round
+  original=$(placeholder_ini)
+  round=$(placeholder_ini | mask_filter smudge | mask_filter clean)
+  [ "$original" = "$round" ]
+}
+
+# The obs config dir sits *under* $HOME, so a naive HOME-first clean would leave
+# `{{HOME}}/Library/Application Support/obs-studio` — masked, but no longer
+# recognisable to smudge as the config dir. The specific match must win.
+mixed_placeholders() {
+  printf 'mask=%s/basic/assets/image-mask.png\nrec=%s/Movies\n' \
+    '{{OBS_CONFIG_DIR}}' '{{HOME}}'
+}
+
+@test "the config dir wins over the bare home prefix when cleaning" {
+  local cleaned
+  cleaned=$(mixed_placeholders | mask_filter smudge | mask_filter clean)
+  [ "$(count_occurrences '{{OBS_CONFIG_DIR}}/basic/assets/image-mask.png' <<<"$cleaned")" -eq 1 ]
+  [ "$(count_occurrences '{{HOME}}/Movies' <<<"$cleaned")" -eq 1 ]
+  [ "$(count_occurrences '{{HOME}}/Library' <<<"$cleaned")" -eq 0 ]
+}
+
+@test "content holding both placeholders round-trips exactly in both directions" {
+  local original absolute
+  original=$(mixed_placeholders)
+  [ "$(mixed_placeholders | mask_filter smudge | mask_filter clean)" = "$original" ]
+
+  absolute=$(mixed_placeholders | mask_filter smudge)
+  [ "$(mask_filter clean <<<"$absolute" | mask_filter smudge)" = "$absolute" ]
+  [ "$(count_occurrences '{{' <<<"$absolute")" -eq 0 ]
+}
+
+# The masking must touch path values and nothing else — basic.ini carries
+# deliberate non-default capture settings that a broader rewrite would eat.
+@test "the staged basic.ini keeps its 4K 60fps advanced settings" {
+  local staged
+  staged=$(git -C "${BATS_TEST_DIRNAME}/.." show ":$OBS_BASIC_INI_PATH")
+  grep -q '^BaseCX=3840$' <<<"$staged"
+  grep -q '^BaseCY=2160$' <<<"$staged"
+  grep -q '^OutputCX=3840$' <<<"$staged"
+  grep -q '^OutputCY=2160$' <<<"$staged"
+  grep -q '^FPSCommon=60$' <<<"$staged"
+  grep -q '^Mode=Advanced$' <<<"$staged"
+}
+
 @test "clean rewrites the absolute obs config dir to the placeholder" {
   local cleaned
   cleaned=$(absolute_scene | mask_filter clean)
@@ -2666,6 +2771,69 @@ run_filter_without_python3() {
   [ "$output" = "$(absolute_scene)" ]
 }
 
+# Substitution only covers *this* machine's $HOME, so a path holding someone
+# else's username survives it untouched. Replaying that verbatim at exit 0 is
+# the silent bad commit — `required = true` sees success and stages the name.
+foreign_ini() {
+  printf 'FilePath=/Users/otheruser/Movies\n'
+}
+
+@test "clean refuses content still holding a foreign home path" {
+  bats_run mask_filter clean <<<"$(foreign_ini)"
+  [ "$status" -ne 0 ]
+  [ "$(count_occurrences '/Users/otheruser/Movies' <<<"$output")" -eq 0 ]
+}
+
+# A guard keyed on the literal `/Users/` would miss the linux shape entirely.
+@test "clean refuses a home path in the non-macOS shape" {
+  bats_run mask_filter clean <<<"FilePath=/home/otheruser/Movies"
+  [ "$status" -ne 0 ]
+  [ "$(count_occurrences '/home/otheruser/Movies' <<<"$output")" -eq 0 ]
+}
+
+@test "the unmasked-leftover refusal names the offending path" {
+  bats_run mask_filter clean <<<"$(foreign_ini)"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"/Users/otheruser"* ]]
+}
+
+# The asymmetry is the whole design: a stale worktree path beats a checkout
+# that aborts, so smudge must not inherit the guard.
+@test "smudge passes a foreign home path through verbatim" {
+  bats_run mask_filter smudge <<<"$(foreign_ini)"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(foreign_ini)" ]
+}
+
+@test "the leftover guard leaves this machine's own home path alone" {
+  bats_run mask_filter clean <<<"$(absolute_ini)"
+  [ "$status" -eq 0 ]
+  [ "$(count_occurrences '{{HOME}}' <<<"$output")" -eq 2 ]
+  [ "$(count_occurrences '/Users/' <<<"$output")" -eq 0 ]
+}
+
+# `required = true` only aborts the commit if the filter's exit status says so,
+# so the guard is worth nothing unless `git add` itself refuses.
+@test "git add refuses a file carrying a foreign username" {
+  REPO_DIR="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "$REPO_DIR/obs/7680x2160/basic/scenes"
+  git -C "$REPO_DIR" init -q
+  git -C "$REPO_DIR" config user.email t@example.com
+  git -C "$REPO_DIR" config user.name t
+  echo 'obs/*/basic/scenes/*.json filter=obsmaskpath' >"$REPO_DIR/.gitattributes"
+  cp "${BATS_TEST_DIRNAME}/../obs/filter-mask-path.sh" "$REPO_DIR/obs/"
+  chmod +x "$REPO_DIR/obs/filter-mask-path.sh"
+  printf '{"a":"/Users/otheruser/Movies/x.png"}' >"$REPO_DIR/$OBS_SCENE_PATH"
+
+  bats_run setup_obs_filter
+  [ "$status" -eq 0 ]
+
+  bats_run git -C "$REPO_DIR" add -A
+  [ "$status" -ne 0 ]
+  bats_run git -C "$REPO_DIR" ls-files --cached "$OBS_SCENE_PATH"
+  [ -z "$output" ]
+}
+
 @test "setup_obs_filter registers clean, smudge and required in git config" {
   REPO_DIR="${BATS_TEST_TMPDIR}/repo"
   mkdir -p "$REPO_DIR/obs"
@@ -2769,7 +2937,7 @@ seed_clone_without_filter() {
   git -C "$REPO_DIR" config filter.obsmaskpath.smudge false
   git -C "$REPO_DIR" config filter.obsmaskpath.required true
 
-  bats_run resmudge_obs_scenes
+  bats_run resmudge_obs_configs
   [ -f "$REPO_DIR/$OBS_SCENE_PATH" ]
   [ "$(cat "$REPO_DIR/$OBS_SCENE_PATH")" = "$before" ]
 }

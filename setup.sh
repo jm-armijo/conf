@@ -324,8 +324,9 @@ setup_obs() {
   echo "obs: linked '$choice' (quit & reopen OBS to apply)"
 }
 
-# The scene file must hold an absolute image_path for OBS, but must never
-# commit one — a username baked into a tracked file breaks the next machine.
+# OBS's config files must hold absolute paths for OBS to resolve them, but must
+# never commit one — a username baked into a tracked file breaks the next
+# machine.
 # A clean/smudge filter keeps that invariant by construction; `required` makes
 # a missing filter a loud error instead of silently committing the real path.
 setup_obs_filter() {
@@ -342,7 +343,7 @@ setup_obs_filter() {
   git -C "$REPO_DIR" config filter.obsmaskpath.required true || return 1
   echo "obs: registered the mask-path clean/smudge filter"
 
-  resmudge_obs_scenes || {
+  resmudge_obs_configs || {
     echo "obs: filter registered, but the re-smudge failed"
     return 1
   }
@@ -351,12 +352,12 @@ setup_obs_filter() {
 # A clone runs its checkout before this filter is registered, so the worktree
 # holds the literal placeholder and git sees nothing to do — the cleaned
 # worktree already equals the index. Only an explicit re-checkout expands it.
-resmudge_obs_scenes() {
+resmudge_obs_configs() {
   local filter="$REPO_DIR/obs/filter-mask-path.sh" path stash failed=0
 
   while IFS= read -r -d '' path; do
     [[ -n "$path" && -f "$REPO_DIR/$path" ]] || continue
-    grep -qF '{{OBS_CONFIG_DIR}}' "$REPO_DIR/$path" || continue
+    grep -qE '\{\{(OBS_CONFIG_DIR|HOME)\}\}' "$REPO_DIR/$path" || continue
 
     # Restoring from the index is lossless only where the worktree differs by
     # nothing but the path form, which is exactly what cleaning it proves.
