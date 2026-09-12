@@ -22,29 +22,53 @@ backup_path_for() {
   echo "$1.backup.$(date +%Y%m%d%H%M%S)"
 }
 
-link() {
+link_verdict() {
   local src="$1" dest="$2"
 
   if [[ ! -e "$src" ]]; then
-    echo "skip: source missing $src"
+    echo "missing-source"
     return 1
   fi
 
   if [[ -L "$dest" && "$(readlink "$dest")" == "$src" ]]; then
-    echo "ok:   $dest already links to repo"
+    echo "already-linked"
     return 0
   fi
 
+  # -L as well as -e: a dangling symlink is invisible to -e, yet ln -s onto it fails.
   if [[ -e "$dest" || -L "$dest" ]]; then
-    # Split from the assignment: `local x=$(...)` masks the command's exit status.
-    local backup
-    backup="$(backup_path_for "$dest")"
-    mv "$dest" "$backup" || {
-      echo "error: could not back up $dest"
-      return 1
-    }
-    echo "back: moved existing $dest -> $backup"
+    echo "needs-backup-then-link"
+    return 0
   fi
+
+  echo "needs-link"
+}
+
+link() {
+  local src="$1" dest="$2" verdict
+
+  verdict="$(link_verdict "$src" "$dest")"
+
+  case "$verdict" in
+    missing-source)
+      echo "skip: source missing $src"
+      return 1
+      ;;
+    already-linked)
+      echo "ok:   $dest already links to repo"
+      return 0
+      ;;
+    needs-backup-then-link)
+      # Split from the assignment: `local x=$(...)` masks the command's exit status.
+      local backup
+      backup="$(backup_path_for "$dest")"
+      mv "$dest" "$backup" || {
+        echo "error: could not back up $dest"
+        return 1
+      }
+      echo "back: moved existing $dest -> $backup"
+      ;;
+  esac
 
   mkdir -p "$(dirname "$dest")" || return 1
   ln -s "$src" "$dest" || return 1

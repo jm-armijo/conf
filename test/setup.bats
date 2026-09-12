@@ -84,6 +84,106 @@ backup_count() {
   [ ! -L "$DEST" ]
 }
 
+@test "link_verdict reports missing-source when the source does not exist" {
+  bats_run link_verdict "${BATS_TEST_TMPDIR}/does-not-exist" "$DEST"
+  [ "$status" -eq 1 ]
+  [ "$output" = "missing-source" ]
+}
+
+# -e follows the link, so a source whose target is gone is as absent as no file.
+@test "link_verdict reports missing-source for a dangling symlink source" {
+  local dangling="${BATS_TEST_TMPDIR}/dangling"
+  ln -s "${BATS_TEST_TMPDIR}/never-existed" "$dangling"
+
+  bats_run link_verdict "$dangling" "$DEST"
+  [ "$status" -eq 1 ]
+  [ "$output" = "missing-source" ]
+}
+
+@test "link_verdict reports already-linked when the destination links to the source" {
+  ln -s "$SRC" "$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$output" = "already-linked" ]
+}
+
+@test "link_verdict reports needs-backup-then-link for a real file destination" {
+  echo "pre-existing user config" >"$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$output" = "needs-backup-then-link" ]
+}
+
+@test "link_verdict reports needs-backup-then-link for a symlink pointing somewhere else" {
+  local other="${BATS_TEST_TMPDIR}/other"
+  echo "other content" >"$other"
+  ln -s "$other" "$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$output" = "needs-backup-then-link" ]
+}
+
+@test "link_verdict reports needs-backup-then-link for a dangling symlink destination" {
+  ln -s "${BATS_TEST_TMPDIR}/never-existed" "$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$output" = "needs-backup-then-link" ]
+}
+
+@test "link_verdict reports needs-backup-then-link for a directory destination" {
+  mkdir -p "$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$output" = "needs-backup-then-link" ]
+}
+
+@test "link_verdict reports needs-link when the destination does not exist" {
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$output" = "needs-link" ]
+}
+
+@test "link_verdict reports needs-link when the destination's parent directories are missing" {
+  local nested="${BATS_TEST_TMPDIR}/a/b/c/config"
+
+  bats_run link_verdict "$SRC" "$nested"
+  [ "$status" -eq 0 ]
+  [ "$output" = "needs-link" ]
+  [ ! -d "${BATS_TEST_TMPDIR}/a" ]
+}
+
+@test "link_verdict creates nothing when the destination is absent" {
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ ! -e "$DEST" ]
+  [ ! -L "$DEST" ]
+  [ "$(backup_count)" = "0" ]
+}
+
+@test "link_verdict leaves an existing destination file untouched" {
+  echo "pre-existing user config" >"$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ ! -L "$DEST" ]
+  [ "$(cat "$DEST")" = "pre-existing user config" ]
+  [ "$(backup_count)" = "0" ]
+}
+
+@test "link_verdict leaves an already-linked destination untouched" {
+  ln -s "$SRC" "$DEST"
+
+  bats_run link_verdict "$SRC" "$DEST"
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$DEST")" = "$SRC" ]
+  [ "$(backup_count)" = "0" ]
+}
+
 # PATH holds ONLY the stubs a test asks for, so "not stubbed" means absent to
 # `command -v` rather than the developer's real binary.
 starship_env() {
